@@ -1,5 +1,5 @@
 {
-	"name": "music-db",
+	"name": "Investify",
 	"version": "0.0.1",
 	"type": "module",
 	"scripts": {
@@ -16,6 +16,7 @@
 		"vite": "^6.3.5"
 	},
 	"dependencies": {
+		"chart.js": "^4.4.9",
 		"mongodb": "^6.16.0"
 	}
 }
