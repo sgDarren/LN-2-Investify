@@ -14,8 +14,7 @@ function isActive(path) {
 }
 
 async function handleLogout() {
-    await authStore.logout();
-    window.location.href = '/';
+    await authStore.logout(); 
 }
 </script>
 

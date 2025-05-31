@@ -29,12 +29,53 @@ export async function getCustomerById(id) {
     return await customers.findOne({ _id: new ObjectId(id) });
 }
 
-// getUserByEmail function - FEHLTE IN DEINER VERSION
 export async function getUserByEmail(email) {
     const db = await getDb();
     const customers = db.collection('customers');
     return await customers.findOne({ email: email.toLowerCase() });
 }
+
+export async function getUserPortfolios(userId) {
+  const database = await getDb();
+  const portfoliosColl = database.collection('portfolios');
+  
+  // Suche alle Dokumente mit customer_id = ObjectId(userId)
+  const docs = await portfoliosColl.find({ customer_id: new ObjectId(userId) }).toArray();
+  
+  // Wandelt _id zu String um, und ggf. customer_id
+  return docs.map((doc) => ({
+    id: doc._id.toString(),
+    name: doc.name,
+    created_at: doc.created_at,
+    // Falls du später noch einen Wert-Feld hast, z.B. total_value, hier anfügen:
+    // value: doc.total_value
+  }));
+}
+
+// 2. POST: Neues Portfolio erstellen
+export async function createPortfolio(userId, name) {
+  const database = await getDb();
+  const portfoliosColl = database.collection('portfolios');
+
+  const newPortfolio = {
+    customer_id: new ObjectId(userId),
+    name: name,
+    created_at: new Date()
+  };
+
+  const result = await portfoliosColl.insertOne(newPortfolio);
+
+  // Gib das neu erstellte Portfolio als Objekt zurück (inkl. id als String)
+  return {
+    id: result.insertedId.toString(),
+    name: newPortfolio.name,
+    created_at: newPortfolio.created_at
+  };
+}
+
+
+
+
 
 // Portfolio functions
 export async function getPortfolioByCustomerId(customerId) {
@@ -43,57 +84,50 @@ export async function getPortfolioByCustomerId(customerId) {
     return await portfolio.find({ customer_id: customerId }).toArray();
 }
 
-export async function addTransaction(transaction) {
-    const db = await getDb();
-    const transactions = db.collection('transactions');
-    
-    const transactionDoc = {
-        ...transaction,
-        transaction_date: new Date(),
-        created_at: new Date()
+async function getUserPortfolio(userId) {
+    const holdings = await portfolio.find({ userId: new ObjectId(userId) }).toArray();
+    return holdings.map(h => ({
+        ...h,
+        _id: h._id.toString(),
+        userId: h.userId.toString()
+    }));
+}
+
+async function addToPortfolio(userId, purchase) {
+    const holding = {
+        userId: new ObjectId(userId),
+        assetSymbol: purchase.symbol,
+        assetName: purchase.name,
+        assetType: purchase.type, // 'stock', 'crypto', 'etf'
+        amount: purchase.amount,
+        purchasePrice: purchase.price,
+        purchaseDate: new Date(),
+        totalInvested: purchase.amount * purchase.price
     };
     
-    const result = await transactions.insertOne(transactionDoc);
-    
-    // Update portfolio
-    const portfolio = db.collection('portfolio');
-    const existingPosition = await portfolio.findOne({
-        customer_id: transaction.customer_id,
-        asset_symbol: transaction.asset_symbol
-    });
-    
-    if (existingPosition) {
-        // Update existing position
-        const newAmount = existingPosition.amount + transaction.amount;
-        const newTotalValue = (existingPosition.amount * existingPosition.avg_price) + 
-                            (transaction.amount * transaction.price_per_unit);
-        const newAvgPrice = newTotalValue / newAmount;
-        
-        await portfolio.updateOne(
-            { _id: existingPosition._id },
-            {
-                $set: {
-                    amount: newAmount,
-                    avg_price: newAvgPrice,
-                    total_value: newTotalValue,
-                    updated_at: new Date()
-                }
-            }
-        );
-    } else {
-        // Create new position
-        await portfolio.insertOne({
-            customer_id: transaction.customer_id,
-            asset_symbol: transaction.asset_symbol,
-            amount: transaction.amount,
-            avg_price: transaction.price_per_unit,
-            total_value: transaction.amount * transaction.price_per_unit,
-            created_at: new Date(),
-            updated_at: new Date()
-        });
+    const result = await portfolio.insertOne(holding);
+    return { ...holding, _id: result.insertedId.toString() };
+}
+
+async function removeFromPortfolio(holdingId) {
+    return await portfolio.deleteOne({ _id: new ObjectId(holdingId) });
+}
+
+// Price Cache Functions
+async function getCachedPrice(symbol) {
+    const cached = await priceCache.findOne({ symbol });
+    if (cached && (new Date() - cached.updatedAt) < 60000) { // 1 Minute Cache
+        return cached.data;
     }
-    
-    return result;
+    return null;
+}
+
+async function setCachedPrice(symbol, data) {
+    await priceCache.replaceOne(
+        { symbol },
+        { symbol, data, updatedAt: new Date() },
+        { upsert: true }
+    );
 }
 
 export async function createUser(email, password, firstName, lastName) {
@@ -166,7 +200,7 @@ export async function verifyPassword(password, hashedPassword) {
 export default { 
     getCustomerById, 
     getPortfolioByCustomerId, 
-    addTransaction,
+    getUserPortfolios,
     connectToDatabase,
     authenticateUser, 
     createUser,

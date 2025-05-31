@@ -3,6 +3,7 @@
   import { page } from '$app/stores';
   import { goto } from "$app/navigation";
 
+
   // Reactive state mit Svelte 5 Runes
   let email = $state("");
   let password = $state("");
@@ -19,11 +20,9 @@
   $effect(() => {
     if (email.trim() !== lastCheckedEmail) {
       userExists = null;
-      // Don't reset lastCheckedEmail here to avoid infinite loops
     }
   });
 
-  // RICHTIGER Weg: Server Action mit Form + enhance
   async function checkUser() {
     const currentEmail = email.trim();
     
@@ -32,7 +31,6 @@
       return;
     }
     
-    // Verhindere multiple calls für die gleiche Email
     if (isCheckingUser || lastCheckedEmail === currentEmail) {
       console.log('Already checking or already checked:', currentEmail);
       return;
@@ -41,13 +39,11 @@
     isCheckingUser = true;
     lastCheckedEmail = currentEmail;
     console.log('Starting user check for:', currentEmail);
-    
-    // Trigger das versteckte Form
+ 
     const form = document.getElementById('checkUserForm');
     const emailInput = document.getElementById('checkUserEmail');
     emailInput.value = currentEmail;
     
-    // Submit via enhance - das ist der SvelteKit Way!
     const submitEvent = new Event('submit', { cancelable: true });
     form.dispatchEvent(submitEvent);
   }
@@ -56,10 +52,6 @@
     showPassword = !showPassword;
   }
 
-  function setDemoCredentials() {
-    email = "demo@investify.com";
-    password = "demo123";
-  }
 </script>
 
 <svelte:head>
@@ -110,6 +102,14 @@
                 return async ({ result, update }) => {
                   isSubmitting = false;
                   await update();
+
+                  if (result?.success) {
+                    // Redirect to dashboard on success
+                    goto('/dashboard');
+                  } else if (result?.error) {
+                    // Handle error
+                    console.error('Login failed:', result.error);
+                  }
                 };
               }}
             >
@@ -223,19 +223,6 @@
               </p>
             </div>
 
-            <div class="mt-4 pt-4 border-top">
-              <div class="text-center">
-                <p class="small text-muted mb-2">Für Demo-Zwecke:</p>
-                <button
-                  type="button"
-                  class="btn btn-outline-secondary btn-sm"
-                  on:click={setDemoCredentials}
-                >
-                  <i class="bi bi-person-gear me-1"></i>
-                  Demo-Login verwenden
-                </button>
-              </div>
-            </div>
           </div>
         </div>
       </div>

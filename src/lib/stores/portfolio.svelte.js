@@ -37,23 +37,23 @@ class PortfolioStore {
         }
     }
     
-    async addTransaction(transaction) {
-        try {
-            const response = await fetch('/api/portfolio', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(transaction)
-            });
+    // async addTransaction(transaction) {
+    //     try {
+    //         const response = await fetch('/api/portfolio', {
+    //             method: 'POST',
+    //             headers: { 'Content-Type': 'application/json' },
+    //             body: JSON.stringify(transaction)
+    //         });
             
-            if (!response.ok) throw new Error('Failed to add transaction');
+    //         if (!response.ok) throw new Error('Failed to add transaction');
             
-            // Reload portfolio after successful transaction
-            await this.loadPortfolio();
-            return { success: true };
-        } catch (error) {
-            return { success: false, error: error.message };
-        }
-    }
+    //         // Reload portfolio after successful transaction
+    //         await this.loadPortfolio();
+    //         return { success: true };
+    //     } catch (error) {
+    //         return { success: false, error: error.message };
+    //     }
+    // }
     
     getPositionBySymbol(symbol) {
         return this.positions.find(p => p.asset_symbol === symbol);

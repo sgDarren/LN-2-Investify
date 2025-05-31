@@ -1,5 +1,5 @@
 import { verifyToken } from '$lib/server/auth.js';
-import { db } from '$lib/server/db.js';
+import db from '$lib/server/db.js';
 
 export async function handle({ event, resolve }) {
     const token = event.cookies.get('auth_token');
@@ -16,10 +16,12 @@ export async function handle({ event, resolve }) {
                         firstName: user.firstname,
                         lastName: user.lastname
                     };
+                } else {
+                    // User nicht mehr in DB - Cookie löschen
+                    event.cookies.delete('auth_token', { path: '/' });
                 }
             } catch (error) {
                 console.error('Auth hook error:', error);
-                // Clear invalid token
                 event.cookies.delete('auth_token', { path: '/' });
             }
         } else {

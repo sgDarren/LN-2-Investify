@@ -1,4 +1,5 @@
 import { browser } from '$app/environment';
+import { goto } from '$app/navigation';
 
 class AuthStore {
     user = $state(null);
@@ -14,11 +15,30 @@ class AuthStore {
         this.isLoading = loading;
     }
 
-    logout() {
-        this.user = null;
-        this.isLoading = false;
+    async logout() {
+        this.isLoading = true;
+        
         if (browser) {
-            localStorage.removeItem('user');
+            try {
+                // Server-seitigen Logout aufrufen
+                const response = await fetch('/auth/logout', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+                
+                if (response.ok) {
+                    this.user = null;
+                    goto('/auth/login');
+                } else {
+                    console.error('Logout failed');
+                }
+            } catch (error) {
+                console.error('Logout error:', error);
+            } finally {
+                this.isLoading = false;
+            }
         }
     }
 
@@ -26,6 +46,12 @@ class AuthStore {
         if (user) {
             this.user = user;
         }
+        this.isLoading = false;
+    }
+
+    // Hilfsmethode für Login Success
+    handleLoginSuccess(user) {
+        this.setUser(user);
     }
 }
 

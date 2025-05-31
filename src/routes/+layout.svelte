@@ -1,8 +1,7 @@
 <script>
-import { onMount } from 'svelte';
 import { page } from '$app/stores';
 import { authStore } from '$lib/stores/auth.svelte.js';
-import Navbar from '$lib/components/ui/Navbar.svelte';
+import Navbar from '$lib/components/Navbar.svelte';
 
 let { data, children } = $props();
 
@@ -12,7 +11,8 @@ let isAuthPage = $derived(
     currentPath.startsWith('/auth/') || currentPath === '/'
 );
 
-onMount(() => {
+// Svelte 5 Runes way - use $effect instead of onMount
+$effect(() => {
     // Set user from SSR data
     if (data.user) {
         authStore.setUser(data.user);
@@ -51,11 +51,11 @@ onMount(() => {
         min-height: calc(100vh - 56px); /* Account for navbar height */
         padding-top: 2rem;
     }
-    
+
     :global(body) {
         background-color: #f8f9fa;
     }
-    
+
     :global(.navbar) {
         box-shadow: 0 2px 4px rgba(0,0,0,.1);
     }

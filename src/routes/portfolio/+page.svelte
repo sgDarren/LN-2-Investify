@@ -2,7 +2,7 @@
 import { onMount } from 'svelte';
 import { portfolioStore } from '$lib/stores/portfolio.svelte.js';
 import { assetStore } from '$lib/stores/assets.svelte.js';
-import AssetCard from '$lib/components/assets/AssetCard.svelte';
+import AssetCard from '$lib/components/AssetCard.svelte';
 
 let positions = $derived(portfolioStore.positions);
 let isLoading = $derived(portfolioStore.isLoading);
