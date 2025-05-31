@@ -1,23 +1,58 @@
-<h1>Home</h1>
-<h2>This is the start page</h2>
-<p>
-  Lorem ipsum dolor sit amet, consectetuer adipiscing elit. Aenean commodo
-  ligula eget dolor. Aenean massa. Cum sociis natoque penatibus et magnis dis
-  parturient montes, nascetur ridiculus mus. Donec quam felis, ultricies nec,
-  pellentesque eu, pretium quis, sem. Nulla consequat massa quis enim. Donec
-  pede justo, fringilla vel, aliquet nec, vulputate eget, arcu. In enim justo,
-  rhoncus ut, imperdiet a, venenatis vitae, justo. Nullam dictum felis eu pede
-  mollis pretium. Integer tincidunt. Cras dapibus. Vivamus elementum semper
-  nisi. Aenean vulputate eleifend tellus. Aenean leo ligula, porttitor eu,
-  consequat vitae, eleifend ac, enim. Aliquam lorem ante, dapibus in, viverra
-  quis, feugiat a, tellus. Phasellus viverra nulla ut metus varius laoreet.
-  Quisque rutrum. Aenean imperdiet. Etiam ultricies nisi vel augue. Curabitur
-  ullamcorper ultricies nisi. Nam eget dui. Etiam rhoncus. Maecenas tempus,
-  tellus eget condimentum rhoncus, sem quam semper libero, sit amet adipiscing
-  sem neque sed ipsum. Nam quam nunc, blandit vel, luctus pulvinar, hendrerit
-  id, lorem. Maecenas nec odio et ante tincidunt tempus. Donec vitae sapien ut
-  libero venenatis faucibus. Nullam quis ante. Etiam sit amet orci eget eros
-  faucibus tincidunt. Duis leo. Sed fringilla mauris sit amet nibh. Donec
-  sodales sagittis magna. Sed consequat, leo eget bibendum sodales, augue velit
-  cursus nunc,
-</p>
+<script>
+import { onMount } from 'svelte';
+import { authStore } from '$lib/stores/auth.svelte.js';
+import { portfolioStore } from '$lib/stores/portfolio.svelte.js';
+// import PortfolioSummary from '$lib/components/dashboard/PortfolioSummary.svelte';
+// import PortfolioPieChart from '$lib/components/dashboard/PortfolioPieChart.svelte';
+// import RecentTransactions from '$lib/components/dashboard/RecentTransactions.svelte';
+
+let { data } = $props();
+
+let user = $derived(authStore.user);
+let isAuthenticated = $derived(authStore.isAuthenticated);
+let positions = $derived(portfolioStore.positions);
+
+onMount(() => {
+    if (data.user) {
+        authStore.setUser(data.user);
+        portfolioStore.loadPortfolio();
+    }
+});
+</script>
+
+<svelte:head>
+    <title>Investify - Dashboard</title>
+</svelte:head>
+
+{#if isAuthenticated}
+    <div class="container-fluid">
+        <div class="row mb-4">
+            <div class="col">
+                <h1 class="h2">Welcome back, {user?.firstName}!</h1>
+                <p class="text-muted">Here's your investment overview</p>
+            </div>
+        </div>
+        
+        <PortfolioSummary />
+        
+        <div class="row mt-4">
+            <div class="col-md-8">
+                <RecentTransactions />
+            </div>
+            <div class="col-md-4">
+                <PortfolioPieChart />
+            </div>
+        </div>
+    </div>
+{:else}
+    <div class="hero-section text-center py-5">
+        <div class="container">
+            <h1 class="display-4">Welcome to Investify</h1>
+            <p class="lead">Your personal investment platform</p>
+            <div class="mt-4">
+                <a href="/auth/login" class="btn btn-primary btn-lg me-3">Login</a>
+                <a href="/auth/register" class="btn btn-outline-primary btn-lg">Sign Up</a>
+            </div>
+        </div>
+    </div>
+{/if}

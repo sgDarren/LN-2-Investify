@@ -1,5 +1,5 @@
 import { verifyToken } from '$lib/server/auth.js';
-import { getCustomerById } from '$lib/server/db.js';
+import { db } from '$lib/server/db.js';
 
 export async function handle({ event, resolve }) {
     const token = event.cookies.get('auth_token');
@@ -8,7 +8,7 @@ export async function handle({ event, resolve }) {
         const payload = verifyToken(token);
         if (payload) {
             try {
-                const user = await getCustomerById(payload.userId);
+                const user = await db.getUserByEmail(payload.email);
                 if (user) {
                     event.locals.user = {
                         id: user._id.toString(),
@@ -18,10 +18,15 @@ export async function handle({ event, resolve }) {
                     };
                 }
             } catch (error) {
-                console.error('Error loading user:', error);
+                console.error('Auth hook error:', error);
+                // Clear invalid token
+                event.cookies.delete('auth_token', { path: '/' });
             }
+        } else {
+            // Invalid token
+            event.cookies.delete('auth_token', { path: '/' });
         }
     }
-    
-    return resolve(event);
+
+    return await resolve(event);
 }
