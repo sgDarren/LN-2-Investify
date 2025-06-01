@@ -74,16 +74,6 @@
             <span>Assets</span>
           </a>
         </li>
-        <li class="nav-item">
-          <a
-            class="nav-link"
-            class:active={isActive("/transactions")}
-            href="/transactions"
-          >
-            <i class="bi bi-arrow-left-right nav-icon"></i>
-            <span>Transaktionen</span>
-          </a>
-        </li>
       </ul>
 
       {#if isAuthenticated}
