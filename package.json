@@ -17,6 +17,7 @@
 	},
 	"dependencies": {
 		"bcryptjs": "^3.0.2",
+		"better-auth": "^1.2.8",
 		"chart.js": "^4.4.9",
 		"chartjs-adapter-date-fns": "^3.0.0",
 		"date-fns": "^4.1.0",

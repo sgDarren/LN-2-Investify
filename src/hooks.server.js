@@ -1,34 +1,6 @@
-import { verifyToken } from '$lib/server/auth.js';
-import db from '$lib/server/db.js';
+import { auth } from "$lib/server/auth";
+import { svelteKitHandler } from "better-auth/svelte-kit";
 
 export async function handle({ event, resolve }) {
-    const token = event.cookies.get('auth_token');
-    
-    if (token) {
-        const payload = verifyToken(token);
-        if (payload) {
-            try {
-                const user = await db.getUserByEmail(payload.email);
-                if (user) {
-                    event.locals.user = {
-                        id: user._id.toString(),
-                        email: user.email,
-                        firstName: user.firstname,
-                        lastName: user.lastname
-                    };
-                } else {
-                    // User nicht mehr in DB - Cookie löschen
-                    event.cookies.delete('auth_token', { path: '/' });
-                }
-            } catch (error) {
-                console.error('Auth hook error:', error);
-                event.cookies.delete('auth_token', { path: '/' });
-            }
-        } else {
-            // Invalid token
-            event.cookies.delete('auth_token', { path: '/' });
-        }
-    }
-
-    return await resolve(event);
+    return svelteKitHandler({ event, resolve, auth });
 }

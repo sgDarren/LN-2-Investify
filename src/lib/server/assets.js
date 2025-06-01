@@ -1,78 +1,128 @@
 import { ALPHA_VANTAGE_API_KEY } from '$env/static/private';
+import { getCachedPrice, setCachedPrice } from './db.js';
 
-const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
-const priceCache = new Map();
+// Rate limiting für API calls
+const apiCallQueue = [];
+let lastApiCall = 0;
+const API_CALL_DELAY = 12000; // 12 Sekunden zwischen Calls (5 calls/minute)
 
-export async function getCachedPrice(symbol) {
-  const cached = priceCache.get(symbol);
-  if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
-    return cached.data;
-  }
-  return null;
+async function throttledApiCall(fn) {
+    return new Promise((resolve) => {
+        apiCallQueue.push(async () => {
+            const now = Date.now();
+            const timeSinceLastCall = now - lastApiCall;
+            const delay = Math.max(0, API_CALL_DELAY - timeSinceLastCall);
+            
+            if (delay > 0) {
+                await new Promise(r => setTimeout(r, delay));
+            }
+            
+            lastApiCall = Date.now();
+            const result = await fn();
+            resolve(result);
+        });
+        
+        if (apiCallQueue.length === 1) {
+            apiCallQueue[0]();
+        }
+    });
 }
 
-export function setCachedPrice(symbol, data) {
-  priceCache.set(symbol, {
-    data,
-    timestamp: Date.now()
-  });
-}
-
-// Alpha Vantage für Aktien
 export async function fetchStockPrice(symbol) {
-  const cacheKey = `stock_${symbol}`;
-  const cached = await getCachedPrice(cacheKey);
-  if (cached) return cached;
-
-  try {
-    const response = await fetch(
-      `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${symbol}&apikey=${ALPHA_VANTAGE_API_KEY}`
-    );
-    const data = await response.json();
-
-    if (data['Error Message']) {
-      throw new Error(`Stock not found: ${symbol}`);
+    // Erst Cache prüfen
+    const cached = await getCachedPrice(symbol);
+    if (cached) {
+        console.log(`Using cached price for ${symbol}`);
+        return cached;
     }
 
-    const quote = data['Global Quote'];
-    if (!quote || !quote['05. Price'] || !quote['10. Change Percent']) {
-      throw new Error(`Ungültige Daten von Alpha Vantage für ${symbol}`);
+    try {
+        const priceData = await throttledApiCall(async () => {
+            console.log(`Fetching price for ${symbol} from Alpha Vantage`);
+            
+            const response = await fetch(
+                `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${symbol}&apikey=${ALPHA_VANTAGE_API_KEY}`
+            );
+            
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            
+            // Error handling
+            if (data['Note']) {
+                throw new Error('API call frequency limit reached');
+            }
+            
+            if (data['Error Message']) {
+                throw new Error(`Stock not found: ${symbol}`);
+            }
+            
+            const quote = data['Global Quote'];
+            if (!quote || Object.keys(quote).length === 0) {
+                // Fallback auf Demo-Daten
+                console.warn(`No data for ${symbol}, using demo data`);
+                return getDemoPrice(symbol);
+            }
+            
+            return {
+                symbol: quote['01. symbol'],
+                price: parseFloat(quote['05. price']),
+                change: parseFloat(quote['09. change']),
+                changePercent: parseFloat(quote['10. change percent'].replace('%', '')),
+                lastUpdated: new Date(),
+                currency: 'USD',
+                type: 'stock'
+            };
+        });
+        
+        // Cache speichern
+        await setCachedPrice(symbol, priceData);
+        apiCallQueue.shift();
+        
+        // Nächsten Call ausführen falls vorhanden
+        if (apiCallQueue.length > 0) {
+            apiCallQueue[0]();
+        }
+        
+        return priceData;
+    } catch (error) {
+        console.error(`Error fetching stock price for ${symbol}:`, error);
+        apiCallQueue.shift();
+        
+        // Fallback auf Demo-Daten
+        return getDemoPrice(symbol);
     }
+}
 
-    const priceData = {
-      symbol: quote['01. Symbol'],
-      price: parseFloat(quote['05. Price']),
-      change: parseFloat(quote['09. Change']),
-      changePercent: parseFloat(quote['10. Change Percent'].replace('%', '')),
-      lastUpdated: quote['07. Latest Trading Day'],
-      type: 'stock'
+// Demo-Daten für Entwicklung/Testing
+function getDemoPrice(symbol) {
+    const basePrices = {
+        'AAPL': 180.50,
+        'MSFT': 420.30,
+        'GOOGL': 142.80,
+        'AMZN': 178.90,
+        'TSLA': 242.60,
+        'NVDA': 882.40,
+        'META': 502.30
     };
-
-    setCachedPrice(cacheKey, priceData);
-    return priceData;
-  } catch (error) {
-    console.error(`Error fetching stock price for ${symbol}:`, error);
-    throw error;
-  }
+    
+    const basePrice = basePrices[symbol] || 100;
+    const randomChange = (Math.random() - 0.5) * 10;
+    const price = basePrice + randomChange;
+    
+    return {
+        symbol,
+        price,
+        change: randomChange,
+        changePercent: (randomChange / basePrice) * 100,
+        lastUpdated: new Date(),
+        currency: 'USD',
+        type: 'stock'
+    };
 }
 
-// Crypto-Funktionen auskommentiert, da vorerst nur Aktien benötigt werden
-// export async function fetchCryptoPrice(symbol) {
-//   // ...
-// }
-
-// export async function fetchHistoricalData(symbol, period = '30d') {
-//   // ...
-// }
-
-// fetchAssetPrice liefert nun immer nur die Aktien-Daten zurück
-export async function fetchAssetPrice(symbol /*, type = 'auto' */) {
-  return await fetchStockPrice(symbol);
+export async function fetchAssetPrice(symbol, type = 'stock') {
+    return await fetchStockPrice(symbol);
 }
-
-export default {
-  fetchAssetPrice,
-  fetchStockPrice
-  // fetchCryptoPrice,
-  // fetchHistoricalData
-};

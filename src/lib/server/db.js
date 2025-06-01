@@ -539,6 +539,265 @@ export async function setCachedPrice(symbol, data) {
   );
 }
 
+
+export async function getPortfolioById(portfolioId) {
+  try {
+    const database = await getDb();
+    const portfolio = await database
+      .collection('portfolios')
+      .findOne({ _id: new ObjectId(portfolioId) });
+    
+    return portfolio;
+  } catch (error) {
+    console.error(`Fehler beim Laden des Portfolios ${portfolioId}:`, error);
+    throw error;
+  }
+}
+
+/** Holt alle Portfolios eines Kunden mit berechnetem Wert */
+export async function getPortfolioByCustomerId(customerId) {
+  try {
+    const database = await getDb();
+    const portfolios = await database
+      .collection('portfolios')
+      .find({ customer_id: new ObjectId(customerId) })
+      .toArray();
+    
+    // Für jedes Portfolio die Positionen berechnen
+    const result = [];
+    for (const portfolio of portfolios) {
+      const positions = await getPortfolioPositions(portfolio._id.toString());
+      result.push(...positions);
+    }
+    
+    return result;
+  } catch (error) {
+    console.error(`Fehler beim Laden der Portfolios für Kunde ${customerId}:`, error);
+    return [];
+  }
+}
+
+/** Löscht ein Portfolio */
+export async function deletePortfolio(portfolioId, userId) {
+  try {
+    const database = await getDb();
+    
+    // Sicherheitsprüfung
+    const portfolio = await getPortfolioById(portfolioId);
+    if (!portfolio || portfolio.customer_id.toString() !== userId) {
+      throw new Error('Unauthorized');
+    }
+    
+    // Erst alle Transaktionen löschen
+    await database
+      .collection('transactions')
+      .deleteMany({ portfolio_id: new ObjectId(portfolioId) });
+    
+    // Dann Portfolio löschen
+    const result = await database
+      .collection('portfolios')
+      .deleteOne({ _id: new ObjectId(portfolioId) });
+    
+    return result.deletedCount > 0;
+  } catch (error) {
+    console.error(`Fehler beim Löschen des Portfolios ${portfolioId}:`, error);
+    throw error;
+  }
+}
+
+/** Aktualisiert ein Portfolio */
+export async function updatePortfolio(portfolioId, userId, updates) {
+  try {
+    const database = await getDb();
+    
+    // Sicherheitsprüfung
+    const portfolio = await getPortfolioById(portfolioId);
+    if (!portfolio || portfolio.customer_id.toString() !== userId) {
+      throw new Error('Unauthorized');
+    }
+    
+    const result = await database
+      .collection('portfolios')
+      .updateOne(
+        { _id: new ObjectId(portfolioId) },
+        { 
+          $set: {
+            ...updates,
+            updated_at: new Date()
+          }
+        }
+      );
+    
+    return result.modifiedCount > 0;
+  } catch (error) {
+    console.error(`Fehler beim Aktualisieren des Portfolios ${portfolioId}:`, error);
+    throw error;
+  }
+}
+
+/** Löscht eine Transaktion */
+export async function deleteTransaction(transactionId, userId) {
+  try {
+    const database = await getDb();
+    
+    // Erst Transaktion laden und Zugriff prüfen
+    const transaction = await database
+      .collection('transactions')
+      .findOne({ _id: new ObjectId(transactionId) });
+    
+    if (!transaction) {
+      throw new Error('Transaction not found');
+    }
+    
+    // Portfolio-Zugriff prüfen
+    const portfolio = await getPortfolioById(transaction.portfolio_id.toString());
+    if (!portfolio || portfolio.customer_id.toString() !== userId) {
+      throw new Error('Unauthorized');
+    }
+    
+    const result = await database
+      .collection('transactions')
+      .deleteOne({ _id: new ObjectId(transactionId) });
+    
+    return result.deletedCount > 0;
+  } catch (error) {
+    console.error(`Fehler beim Löschen der Transaktion ${transactionId}:`, error);
+    throw error;
+  }
+}
+
+/** Holt Transaktionen für alle Portfolios eines Users */
+export async function getUserTransactions(userId, limit = 50) {
+  try {
+    const database = await getDb();
+    
+    // Erst alle Portfolio-IDs des Users holen
+    const portfolios = await database
+      .collection('portfolios')
+      .find({ customer_id: new ObjectId(userId) })
+      .project({ _id: 1 })
+      .toArray();
+    
+    const portfolioIds = portfolios.map(p => p._id);
+    
+    // Dann alle Transaktionen dieser Portfolios
+    const transactions = await database
+      .collection('transactions')
+      .find({ portfolio_id: { $in: portfolioIds } })
+      .sort({ transaction_date: -1 })
+      .limit(limit)
+      .toArray();
+    
+    // Portfolio-Namen hinzufügen
+    const portfolioMap = {};
+    for (const portfolio of portfolios) {
+      const fullPortfolio = await getPortfolioById(portfolio._id.toString());
+      portfolioMap[portfolio._id.toString()] = fullPortfolio.name;
+    }
+    
+    return transactions.map(tx => ({
+      id: tx._id.toString(),
+      portfolio_id: tx.portfolio_id.toString(),
+      portfolio_name: portfolioMap[tx.portfolio_id.toString()],
+      symbol: tx.symbol,
+      type: tx.type,
+      quantity: tx.quantity,
+      price: tx.price,
+      total_amount: tx.total_amount,
+      currency: tx.currency,
+      transaction_date: tx.transaction_date,
+      created_at: tx.created_at
+    }));
+  } catch (error) {
+    console.error(`Fehler beim Laden der Transaktionen für User ${userId}:`, error);
+    return [];
+  }
+}
+
+/** Sucht Assets nach Text */
+export async function searchAssets(query) {
+  try {
+    const database = await getDb();
+    const searchRegex = new RegExp(query, 'i');
+    
+    const assets = await database
+      .collection('assets')
+      .find({
+        $or: [
+          { symbol: searchRegex },
+          { name: searchRegex },
+          { description: searchRegex }
+        ]
+      })
+      .limit(20)
+      .toArray();
+    
+    return assets.map(asset => ({
+      _id: asset._id.toString(),
+      symbol: asset.symbol,
+      name: asset.name || asset.symbol,
+      type: asset.type,
+      category: asset.category || asset.type,
+      price: asset.currentPrice || asset.price || 0,
+      change: asset.change || 0,
+      changePercent: asset.changePercent || 0,
+      currency: asset.currency || 'USD'
+    }));
+  } catch (error) {
+    console.error(`Fehler bei der Asset-Suche für "${query}":`, error);
+    return [];
+  }
+}
+
+/** Erstellt ein neues Asset */
+export async function createAsset(assetData) {
+  try {
+    const database = await getDb();
+    
+    // Prüfen ob Asset bereits existiert
+    const existing = await database
+      .collection('assets')
+      .findOne({ symbol: assetData.symbol.toUpperCase() });
+    
+    if (existing) {
+      throw new Error('Asset already exists');
+    }
+    
+    const newAsset = {
+      symbol: assetData.symbol.toUpperCase(),
+      name: assetData.name,
+      type: assetData.type || 'stock',
+      category: assetData.category || assetData.type,
+      price: assetData.price || 0,
+      currentPrice: assetData.price || 0,
+      change: 0,
+      changePercent: 0,
+      currency: assetData.currency || 'USD',
+      marketCap: assetData.marketCap || null,
+      volume: assetData.volume || null,
+      description: assetData.description || '',
+      sector: assetData.sector || null,
+      exchange: assetData.exchange || null,
+      created_at: new Date(),
+      lastUpdated: new Date()
+    };
+    
+    const result = await database
+      .collection('assets')
+      .insertOne(newAsset);
+    
+    return {
+      id: result.insertedId.toString(),
+      ...newAsset
+    };
+  } catch (error) {
+    console.error('Fehler beim Erstellen des Assets:', error);
+    throw error;
+  }
+}
+
+
+
 //
 // ─── EXPORTIERTE FUNKTIONEN IN EINEM OBJECT ────────────────────────────────────
 //
@@ -567,5 +826,14 @@ export default {
   updateAssetData,
 
   getCachedPrice,
-  setCachedPrice
+  setCachedPrice,
+
+  getPortfolioById,
+  getPortfolioByCustomerId,
+  deletePortfolio,
+  updatePortfolio,
+  deleteTransaction,
+  getUserTransactions,
+  searchAssets,
+  createAsset
 };

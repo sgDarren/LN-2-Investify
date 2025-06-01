@@ -1,67 +1,77 @@
-<script>
-  import { enhance } from '$app/forms';
-  import { page } from '$app/stores';
+<script lang="ts">
+  import { authClient } from "$lib/auth-client";
   import { goto } from "$app/navigation";
 
+  // “session” is a Svelte store from Better Auth that tracks the current user.
+  const session = authClient.useSession();                          
 
-  // Reactive state mit Svelte 5 Runes
-  let email = $state("");
-  let password = $state("");
+  // --- local state (Svelte 5 Runes APIs) ---
+  let email      = $state("");
+  let password   = $state("");
   let showPassword = $state(false);
-  let isSubmitting = $state(false);
-  let userExists = $state(null); // null = not checked, true/false = checked
-  let isCheckingUser = $state(false); // Verhindere multiple calls
-  let lastCheckedEmail = $state(""); // Track welche email gecheckt wurde
+  let isSubmitting  = $state(false);
+  let authError     = $state("");
 
-  // Form data from page.form - noch als store da page ein Store ist
-  let form = $derived($page.form);
-
-  // Reset user check when email changes
+  // If the user is already signed in, immediately redirect.
   $effect(() => {
-    if (email.trim() !== lastCheckedEmail) {
-      userExists = null;
+    if ($session.data) {
+      goto("/dashboard");
     }
   });
 
-  async function checkUser() {
-    const currentEmail = email.trim();
-    
-    if (!currentEmail) {
-      userExists = null;
+  // Attempt to sign in with email + password
+  async function handleLogin(event: Event) {
+    event.preventDefault();
+    isSubmitting = true;
+    authError    = "";
+
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail || !password) {
+      authError = "Bitte E-Mail und Passwort eingeben.";
+      isSubmitting = false;
       return;
     }
-    
-    if (isCheckingUser || lastCheckedEmail === currentEmail) {
-      console.log('Already checking or already checked:', currentEmail);
-      return;
+
+    // call Better Auth’s email/password sign-in
+    const { data, error } = await authClient.signIn.email({
+      email:    trimmedEmail,
+      password: password,
+      callbackURL: "/dashboard"                                     
+    });
+
+    isSubmitting = false;
+
+    if (error) {
+      // Better Auth returns an error object with .message
+      authError = error.message || "Anmeldedaten ungültig.";
+    } else {
+      // on success, data is user session; callbackURL will handle redirect
+      // but to be safe:
+      goto("/dashboard");
     }
-    
-    isCheckingUser = true;
-    lastCheckedEmail = currentEmail;
-    console.log('Starting user check for:', currentEmail);
- 
-    const form = document.getElementById('checkUserForm');
-    const emailInput = document.getElementById('checkUserEmail');
-    emailInput.value = currentEmail;
-    
-    const submitEvent = new Event('submit', { cancelable: true });
-    form.dispatchEvent(submitEvent);
   }
 
+  // Sign out the current user
+  async function handleSignOut() {
+    await authClient.signOut();
+    // session becomes null automatically; redirect if desired:
+    goto("/login");
+  }
+
+  // Toggle showing/hiding the password
   function togglePasswordVisibility() {
     showPassword = !showPassword;
   }
-
 </script>
 
 <svelte:head>
-  <title>Anmelden - Investify</title>
+  <title>Anmelden – Investify</title>
 </svelte:head>
 
 <div class="login-container">
   <div class="container-fluid vh-100">
     <div class="row h-100 g-0">
-      <!-- Left Side - Branding (same as before) -->
+      <!-- Left Side – Branding -->
       <div class="col-lg-7 bg-gradient-primary d-flex align-items-center">
         <div class="branding-content">
           <div class="text-center text-white px-5">
@@ -78,7 +88,7 @@
         </div>
       </div>
 
-      <!-- Right Side - Login Form -->
+      <!-- Right Side – Login Form or Signed-In State -->
       <div class="col-lg-5 d-flex align-items-center justify-content-center bg-light">
         <div class="login-form-container">
           <div class="login-form px-4 px-lg-5">
@@ -87,66 +97,48 @@
               <p class="text-muted">Melden Sie sich in Ihrem Investify-Konto an</p>
             </div>
 
-            {#if form?.error}
-              <div class="alert alert-danger" role="alert">
-                <i class="bi bi-exclamation-triangle-fill me-2"></i>{form.error}
+            {#if $session.data}
+              <!-- User is already signed in (rare, due to redirect above) -->
+              <div class="alert alert-success">
+                Angemeldet als <strong>{$session.data.user?.email}</strong>.
               </div>
-            {/if}
+              <button 
+                class="btn btn-outline-danger btn-lg w-100 mb-4"
+                on:click={handleSignOut}
+              >
+                <i class="bi bi-box-arrow-right me-2"></i>Abmelden
+              </button>
 
-            <form 
-              method="POST" 
-              action="?/login"
-              use:enhance={({ formData }) => {
-                isSubmitting = true;
-                
-                return async ({ result, update }) => {
-                  isSubmitting = false;
-                  await update();
-
-                  if (result?.success) {
-                    // Redirect to dashboard on success
-                    goto('/dashboard');
-                  } else if (result?.error) {
-                    // Handle error
-                    console.error('Login failed:', result.error);
-                  }
-                };
-              }}
-            >
-              <!-- Email Input -->
-              <div class="mb-4">
-                <label for="email" class="form-label fw-semibold">E-Mail-Adresse</label>
-                <div class="input-group">
-                  <span class="input-group-text bg-white border-end-0">
-                    <i class="bi bi-envelope text-muted"></i>
-                  </span>
-                  <input
-                    type="email"
-                    class="form-control form-control-lg border-start-0 ps-0"
-                    id="email"
-                    name="email"
-                    bind:value={email}
-                    placeholder="ihre@email.com"
-                    required
-                    autocomplete="email"
-                    on:blur={checkUser}
-                  />
+            {:else}
+              <!-- Show login form -->
+              {#if authError}
+                <div class="alert alert-danger" role="alert">
+                  <i class="bi bi-exclamation-triangle-fill me-2"></i>{authError}
                 </div>
-                {#if userExists === false}
-                  <div class="form-text text-info">
-                    <i class="bi bi-info-circle me-1"></i>
-                    Benutzer nicht gefunden. Sie werden zur Registrierung weitergeleitet...
-                  </div>
-                {:else if userExists === true}
-                  <div class="form-text text-success">
-                    <i class="bi bi-check-circle me-1"></i>
-                    Benutzer gefunden! Bitte geben Sie Ihr Passwort ein.
-                  </div>
-                {/if}
-              </div>
+              {/if}
 
-              <!-- Password Input - nur anzeigen wenn User existiert oder noch nicht gecheckt -->
-              {#if userExists === null || userExists === true}
+              <form on:submit={handleLogin}>
+                <!-- E-Mail -->
+                <div class="mb-4">
+                  <label for="email" class="form-label fw-semibold">E-Mail-Adresse</label>
+                  <div class="input-group">
+                    <span class="input-group-text bg-white border-end-0">
+                      <i class="bi bi-envelope text-muted"></i>
+                    </span>
+                    <input
+                      id="email"
+                      name="email"
+                      type="email"
+                      class="form-control form-control-lg border-start-0 ps-0"
+                      placeholder="ihre@email.com"
+                      bind:value={email}
+                      required
+                      autocomplete="email"
+                    />
+                  </div>
+                </div>
+
+                <!-- Passwort -->
                 <div class="mb-4">
                   <label for="password" class="form-label fw-semibold">Passwort</label>
                   <div class="input-group">
@@ -154,21 +146,20 @@
                       <i class="bi bi-lock text-muted"></i>
                     </span>
                     <input
-                      type={showPassword ? "text" : "password"}
-                      class="form-control form-control-lg border-start-0 border-end-0 ps-0"
                       id="password"
                       name="password"
-                      bind:value={password}
+                      type={showPassword ? "text" : "password"}
+                      class="form-control form-control-lg border-start-0 border-end-0 ps-0"
                       placeholder="Ihr Passwort"
-                      required={userExists === true}
+                      bind:value={password}
+                      required
                       autocomplete="current-password"
-                      disabled={userExists === false}
                     />
                     <button
                       type="button"
                       class="btn btn-outline-secondary border-start-0"
                       on:click={togglePasswordVisibility}
-                      disabled={userExists === false}
+                      aria-label="Passwort anzeigen/verbergen"
                     >
                       <i class="bi {showPassword ? 'bi-eye-slash' : 'bi-eye'}"></i>
                     </button>
@@ -181,48 +172,36 @@
                       class="form-check-input" 
                       type="checkbox" 
                       id="rememberMe"
-                      disabled={userExists === false}
                     />
                     <label class="form-check-label text-muted small" for="rememberMe">
                       Angemeldet bleiben
                     </label>
                   </div>
-                  <a href="/auth/forgot-password" class="text-decoration-none small">
-                    Passwort vergessen?
-                  </a>
                 </div>
 
                 <button
                   type="submit"
                   class="btn btn-primary btn-lg w-100 mb-4"
-                  disabled={isSubmitting || userExists === false || !email.trim() || (userExists === true && !password.trim())}
+                  disabled={isSubmitting}
                 >
                   {#if isSubmitting}
                     <span class="spinner-border spinner-border-sm me-2"></span>
-                    {userExists === null ? 'Prüfe Benutzer...' : 'Anmelden...'}
+                    Anmelden…
                   {:else}
-                    <i class="bi bi-box-arrow-in-right me-2"></i>
-                    Anmelden
+                    <i class="bi bi-box-arrow-in-right me-2"></i>Anmelden
                   {/if}
                 </button>
-              {:else}
-                <!-- User existiert nicht - zeige nur Info -->
-                <div class="alert alert-info" role="alert">
-                  <i class="bi bi-info-circle me-2"></i>
-                  Kein Konto gefunden. Sie werden zur Registrierung weitergeleitet...
-                </div>
-              {/if}
-            </form>
+              </form>
 
-            <div class="text-center">
-              <p class="text-muted mb-0">
-                Noch kein Konto?
-                <a href="/auth/register" class="text-decoration-none fw-semibold">
-                  Jetzt kostenlos registrieren
-                </a>
-              </p>
-            </div>
-
+              <div class="text-center">
+                <p class="text-muted mb-0">
+                  Noch kein Konto?
+                  <a href="/auth/register" class="text-decoration-none fw-semibold">
+                    Jetzt kostenlos registrieren
+                  </a>
+                </p>
+              </div>
+            {/if}
           </div>
         </div>
       </div>
@@ -263,27 +242,6 @@
     position: relative;
   }
 
-  .feature-card {
-    text-align: center;
-    padding: 1.5rem 1rem;
-    border-radius: 15px;
-    background: rgba(255, 255, 255, 0.1);
-    backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    transition:
-      transform 0.3s ease,
-      background 0.3s ease;
-  }
-
-  .feature-card:hover {
-    transform: translateY(-5px);
-    background: rgba(255, 255, 255, 0.15);
-  }
-
-  .feature-icon {
-    opacity: 0.9;
-  }
-
   .login-form-container {
     width: 100%;
     max-width: 500px;
@@ -319,18 +277,8 @@
     .bg-gradient-primary {
       min-height: 40vh;
     }
-
     .branding-content {
       padding: 2rem 0;
-    }
-
-    .features-grid {
-      display: none;
-    }
-
-    .trust-section {
-      margin-top: 2rem !important;
-      padding-top: 2rem !important;
     }
   }
 
@@ -338,7 +286,6 @@
     .login-form {
       padding: 1rem !important;
     }
-
     .brand-section h1 {
       font-size: 2.5rem !important;
     }
