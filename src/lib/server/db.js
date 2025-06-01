@@ -330,24 +330,34 @@ export async function getAllAssets() {
     const database = await getDb();
     const assets = await database.collection('assets').find({}).toArray();
 
+    console.log(`📦 Raw assets from DB: ${assets.length}`);
+    if (assets.length > 0) {
+      console.log('🔍 First raw asset:', JSON.stringify(assets[0], null, 2));
+    }
+
     return assets.map((asset) => ({
-      _id: asset._id.toString(),
+
       symbol: asset.symbol,
+    
       name: asset.name || asset.symbol,
-      category: asset.category?.toLowerCase() || asset.type,
-      price: asset.currentPrice || asset.price || 0,
+      
+      type: asset.type || asset.category?.toLowerCase() || 'crypto',
+      category: asset.category || 'crypto',
+      
+      price: asset.price || 0,
+      
       change: asset.change || 0,
       changePercent: asset.changePercent || 0,
-      currency: asset.currency || (asset.type === 'stock' ? 'CHF' : 'USD'),
       marketCap: asset.marketCap || null,
       volume: asset.volume || null,
+      currency: asset.currency || 'USD',
       lastUpdated: asset.lastUpdated || new Date(),
       description: asset.description || '',
       sector: asset.sector || null,
       exchange: asset.exchange || null
     }));
   } catch (error) {
-    console.error('Fehler beim Laden der Assets:', error);
+    console.error('💥 Fehler beim Laden der Assets:', error);
     throw new Error('Assets konnten nicht geladen werden');
   }
 }

@@ -132,13 +132,6 @@ function generateColors(count) {
     }
     return colors;
 }
-
-// Hilfsfunktion für DB (falls noch nicht vorhanden)
-async function getPortfolioById(portfolioId) {
-    const db = await getDb();
-    return db.collection('portfolios').findOne({ _id: new ObjectId(portfolioId) });
-}
-
 export const actions = {
     // Quick Buy Action
     quickBuy: async ({ request, params, locals }) => {

@@ -1,5 +1,5 @@
 <script>
-  let { asset, position = null } = $props();
+  const { asset, position = null } = $props();
   
   // Formatiere Preis
   const formattedPrice = new Intl.NumberFormat('de-CH', {

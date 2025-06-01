@@ -6,7 +6,7 @@ import {
   getAssetsByCategory, 
   getAssetCategories,
   getUserPortfolioPositions 
-} from '$lib/db.js';
+} from '$lib/server/db.js';
 
 /** @type {import('./$types').PageServerLoad} */
 export async function load({ url, locals }) {
