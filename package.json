@@ -21,7 +21,6 @@
 		"chart.js": "^4.4.9",
 		"chartjs-adapter-date-fns": "^3.0.0",
 		"date-fns": "^4.1.0",
-		"jsonwebtoken": "^9.0.2",
 		"mongodb": "^6.16.0"
 	}
 }

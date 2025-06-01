@@ -1,22 +1,130 @@
 <script>
-  import { enhance } from '$app/forms';
-  import { page } from '$app/stores';
+  import { authClient } from "$lib/auth-client";
+  import { goto } from "$app/navigation";
 
+  // Better Auth session store
+  const session = authClient.useSession();
+
+  // Form state with Svelte 5 runes
+  let firstName = $state("");
+  let lastName = $state("");
+  let email = $state("");
+  let password = $state("");
+  let confirmPassword = $state("");
+  let acceptTerms = $state(false);
   let showPassword = $state(false);
   let showConfirmPassword = $state(false);
   let isSubmitting = $state(false);
+  let authError = $state("");
 
-  let form = $derived($page.form);
+  // Field errors for validation
+  let fieldErrors = $state({});
 
-  // Pre-fill email from URL params - Svelte 5 way
-  let emailFromUrl = $state('');
-  
+  // Redirect if already authenticated
+  $effect(() => {
+    if ($session.data) {
+      goto("/dashboard");
+    }
+  });
+
+  // Get email from URL params if present
   $effect(() => {
     if (typeof window !== 'undefined') {
       const urlParams = new URLSearchParams(window.location.search);
-      emailFromUrl = urlParams.get('email') || '';
+      const emailParam = urlParams.get('email');
+      if (emailParam) {
+        email = emailParam;
+      }
     }
   });
+
+  // Client-side validation
+  function validateForm() {
+    const errors = {};
+
+    if (!firstName || firstName.trim().length < 2) {
+      errors.firstName = "Vorname muss mindestens 2 Zeichen lang sein";
+    }
+
+    if (!lastName || lastName.trim().length < 2) {
+      errors.lastName = "Nachname muss mindestens 2 Zeichen lang sein";
+    }
+
+    if (!email) {
+      errors.email = "E-Mail-Adresse ist erforderlich";
+    } else {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        errors.email = "Bitte geben Sie eine gültige E-Mail-Adresse ein";
+      }
+    }
+
+    if (!password || password.length < 6) {
+      errors.password = "Passwort muss mindestens 6 Zeichen lang sein";
+    }
+
+    if (password !== confirmPassword) {
+      errors.confirmPassword = "Passwörter stimmen nicht überein";
+    }
+
+    if (!acceptTerms) {
+      errors.acceptTerms = "Sie müssen die Nutzungsbedingungen akzeptieren";
+    }
+
+    fieldErrors = errors;
+    return Object.keys(errors).length === 0;
+  }
+
+  // Handle registration with Better Auth
+  async function handleRegister(event) {
+    event.preventDefault();
+    console.log("handleRegister called"); // Debug
+    
+    // Clear previous errors
+    authError = "";
+    
+    // Validate form
+    if (!validateForm()) {
+      console.log("Validation failed", fieldErrors); // Debug
+      return;
+    }
+
+    isSubmitting = true;
+    console.log("Attempting registration with:", { // Debug
+      email: email.trim(),
+      name: `${firstName.trim()} ${lastName.trim()}`
+    });
+
+    try {
+      // Register with Better Auth
+      const { data, error } = await authClient.signUp.email({
+        email: email.trim(),
+        password: password,
+        name: `${firstName.trim()} ${lastName.trim()}`,
+        callbackURL: "/dashboard"
+      });
+
+      console.log("Registration response:", { data, error }); // Debug
+
+      if (error) {
+        authError = error.message || "Registrierung fehlgeschlagen";
+        
+        // Handle specific errors
+        if (error.message?.includes("already exists") || error.message?.includes("already registered")) {
+          fieldErrors = { email: "Ein Benutzer mit dieser E-Mail-Adresse existiert bereits" };
+        }
+      } else {
+        // Success - Better Auth will handle the redirect
+        console.log("Registration successful, redirecting..."); // Debug
+        goto("/dashboard");
+      }
+    } catch (err) {
+      console.error("Registration error:", err);
+      authError = "Ein unerwarteter Fehler ist aufgetreten. Bitte versuchen Sie es erneut.";
+    } finally {
+      isSubmitting = false;
+    }
+  }
 
   function togglePasswordVisibility() {
     showPassword = !showPassword;
@@ -28,19 +136,61 @@
 </script>
 
 <svelte:head>
-  <title>Registrieren - Investify</title>
+  <title>Registrieren – Investify</title>
 </svelte:head>
 
 <div class="register-container">
   <div class="container-fluid vh-100">
-    <!-- Same layout structure as login -->
     <div class="row h-100 g-0">
-      <!-- Left side branding (same as before) -->
-      <div class="col-lg-7 bg-gradient-primary">
-        <!-- Branding content -->
+      <!-- Left Side – Branding -->
+      <div class="col-lg-7 bg-gradient-primary d-flex align-items-center">
+        <div class="branding-content">
+          <div class="text-center text-white px-5">
+            <div class="brand-section mb-5">
+              <div class="logo-container mb-4">
+                <i class="bi bi-graph-up-arrow display-1"></i>
+              </div>
+              <h1 class="display-3 fw-bold mb-3">Investify</h1>
+              <p class="lead fs-4 mb-5">
+                Ihre zentrale Plattform für intelligentes Investieren
+              </p>
+            </div>
+
+            <!-- Benefits -->
+            <div class="row g-4 mt-4">
+              <div class="col-md-4">
+                <div class="benefit-card">
+                  <i class="bi bi-shield-check display-4 mb-3 benefit-icon"></i>
+                  <h5 class="fw-semibold">Sicher & Geschützt</h5>
+                  <p class="small mb-0 opacity-90">
+                    Höchste Sicherheitsstandards für Ihre Daten
+                  </p>
+                </div>
+              </div>
+              <div class="col-md-4">
+                <div class="benefit-card">
+                  <i class="bi bi-graph-up display-4 mb-3 benefit-icon"></i>
+                  <h5 class="fw-semibold">Smart Investieren</h5>
+                  <p class="small mb-0 opacity-90">
+                    Intelligente Tools für bessere Entscheidungen
+                  </p>
+                </div>
+              </div>
+              <div class="col-md-4">
+                <div class="benefit-card">
+                  <i class="bi bi-people display-4 mb-3 benefit-icon"></i>
+                  <h5 class="fw-semibold">Community</h5>
+                  <p class="small mb-0 opacity-90">
+                    Lernen Sie von erfahrenen Investoren
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
-      <!-- Right Side - Registration Form -->
+      <!-- Right Side – Registration Form -->
       <div class="col-lg-5 d-flex align-items-center justify-content-center bg-light">
         <div class="register-form-container">
           <div class="register-form px-4 px-lg-5">
@@ -49,24 +199,13 @@
               <p class="text-muted">Erstellen Sie Ihr kostenloses Investify-Konto</p>
             </div>
 
-            {#if form?.error}
+            {#if authError}
               <div class="alert alert-danger" role="alert">
-                <i class="bi bi-exclamation-triangle-fill me-2"></i>{form.error}
+                <i class="bi bi-exclamation-triangle-fill me-2"></i>{authError}
               </div>
             {/if}
 
-            <form 
-              method="POST" 
-              action="?/register"
-              use:enhance={({ formElement, formData, action, cancel, submitter }) => {
-                isSubmitting = true;
-                
-                return async ({ result, update }) => {
-                  isSubmitting = false;
-                  await update();
-                };
-              }}
-            >
+            <form on:submit={handleRegister}>
               <!-- Name Fields -->
               <div class="row mb-3">
                 <div class="col-md-6">
@@ -74,15 +213,15 @@
                   <input
                     type="text"
                     class="form-control form-control-lg"
-                    class:is-invalid={form?.fieldErrors?.firstName}
+                    class:is-invalid={fieldErrors.firstName}
                     id="firstName"
                     name="firstName"
-                    value={form?.data?.firstName || ""}
+                    bind:value={firstName}
                     placeholder="Max"
                     required
                   />
-                  {#if form?.fieldErrors?.firstName}
-                    <div class="invalid-feedback">{form.fieldErrors.firstName[0]}</div>
+                  {#if fieldErrors.firstName}
+                    <div class="invalid-feedback">{fieldErrors.firstName}</div>
                   {/if}
                 </div>
                 <div class="col-md-6">
@@ -90,15 +229,15 @@
                   <input
                     type="text"
                     class="form-control form-control-lg"
-                    class:is-invalid={form?.fieldErrors?.lastName}
+                    class:is-invalid={fieldErrors.lastName}
                     id="lastName"
                     name="lastName"
-                    value={form?.data?.lastName || ""}
+                    bind:value={lastName}
                     placeholder="Mustermann"
                     required
                   />
-                  {#if form?.fieldErrors?.lastName}
-                    <div class="invalid-feedback">{form.fieldErrors.lastName[0]}</div>
+                  {#if fieldErrors.lastName}
+                    <div class="invalid-feedback">{fieldErrors.lastName}</div>
                   {/if}
                 </div>
               </div>
@@ -106,18 +245,24 @@
               <!-- Email -->
               <div class="mb-3">
                 <label for="email" class="form-label fw-semibold">E-Mail-Adresse</label>
-                <input
-                  type="email"
-                  class="form-control form-control-lg"
-                  class:is-invalid={form?.fieldErrors?.email}
-                  id="email"
-                  name="email"
-                  value={form?.data?.email || emailFromUrl}
-                  placeholder="ihre@email.com"
-                  required
-                />
-                {#if form?.fieldErrors?.email}
-                  <div class="invalid-feedback">{form.fieldErrors.email[0]}</div>
+                <div class="input-group">
+                  <span class="input-group-text bg-white border-end-0">
+                    <i class="bi bi-envelope text-muted"></i>
+                  </span>
+                  <input
+                    type="email"
+                    class="form-control form-control-lg border-start-0 ps-0"
+                    class:is-invalid={fieldErrors.email}
+                    id="email"
+                    name="email"
+                    bind:value={email}
+                    placeholder="ihre@email.com"
+                    required
+                    autocomplete="email"
+                  />
+                </div>
+                {#if fieldErrors.email}
+                  <div class="invalid-feedback">{fieldErrors.email}</div>
                 {/if}
               </div>
 
@@ -125,25 +270,31 @@
               <div class="mb-3">
                 <label for="password" class="form-label fw-semibold">Passwort</label>
                 <div class="input-group">
+                  <span class="input-group-text bg-white border-end-0">
+                    <i class="bi bi-lock text-muted"></i>
+                  </span>
                   <input
                     type={showPassword ? "text" : "password"}
-                    class="form-control form-control-lg"
-                    class:is-invalid={form?.fieldErrors?.password}
+                    class="form-control form-control-lg border-start-0 border-end-0 ps-0"
+                    class:is-invalid={fieldErrors.password}
                     id="password"
                     name="password"
+                    bind:value={password}
                     placeholder="Mindestens 6 Zeichen"
                     required
+                    autocomplete="new-password"
                   />
                   <button
                     type="button"
-                    class="btn btn-outline-secondary"
+                    class="btn btn-outline-secondary border-start-0"
                     on:click={togglePasswordVisibility}
+                    aria-label="Passwort anzeigen/verbergen"
                   >
                     <i class="bi {showPassword ? 'bi-eye-slash' : 'bi-eye'}"></i>
                   </button>
                 </div>
-                {#if form?.fieldErrors?.password}
-                  <div class="invalid-feedback">{form.fieldErrors.password[0]}</div>
+                {#if fieldErrors.password}
+                  <div class="invalid-feedback">{fieldErrors.password}</div>
                 {/if}
               </div>
 
@@ -151,25 +302,31 @@
               <div class="mb-4">
                 <label for="confirmPassword" class="form-label fw-semibold">Passwort bestätigen</label>
                 <div class="input-group">
+                  <span class="input-group-text bg-white border-end-0">
+                    <i class="bi bi-lock-fill text-muted"></i>
+                  </span>
                   <input
                     type={showConfirmPassword ? "text" : "password"}
-                    class="form-control form-control-lg"
-                    class:is-invalid={form?.fieldErrors?.confirmPassword}
+                    class="form-control form-control-lg border-start-0 border-end-0 ps-0"
+                    class:is-invalid={fieldErrors.confirmPassword}
                     id="confirmPassword"
                     name="confirmPassword"
+                    bind:value={confirmPassword}
                     placeholder="Passwort wiederholen"
                     required
+                    autocomplete="new-password"
                   />
                   <button
                     type="button"
-                    class="btn btn-outline-secondary"
+                    class="btn btn-outline-secondary border-start-0"
                     on:click={toggleConfirmPasswordVisibility}
+                    aria-label="Passwort bestätigen anzeigen/verbergen"
                   >
                     <i class="bi {showConfirmPassword ? 'bi-eye-slash' : 'bi-eye'}"></i>
                   </button>
                 </div>
-                {#if form?.fieldErrors?.confirmPassword}
-                  <div class="invalid-feedback">{form.fieldErrors.confirmPassword[0]}</div>
+                {#if fieldErrors.confirmPassword}
+                  <div class="invalid-feedback">{fieldErrors.confirmPassword}</div>
                 {/if}
               </div>
 
@@ -178,21 +335,43 @@
                 <div class="form-check">
                   <input
                     class="form-check-input"
-                    class:is-invalid={form?.fieldErrors?.acceptTerms}
+                    class:is-invalid={fieldErrors.acceptTerms}
                     type="checkbox"
                     id="acceptTerms"
-                    name="acceptTerms"
-                    value="true"
+                    bind:checked={acceptTerms}
                     required
                   />
                   <label class="form-check-label small" for="acceptTerms">
                     Ich akzeptiere die 
-                    <a href="/terms" class="text-decoration-none fw-semibold">Nutzungsbedingungen</a> 
+                    <a href="/terms" target="_blank" class="text-decoration-none fw-semibold">Nutzungsbedingungen</a> 
                     und die 
-                    <a href="/privacy" class="text-decoration-none fw-semibold">Datenschutzerklärung</a>
+                    <a href="/privacy" target="_blank" class="text-decoration-none fw-semibold">Datenschutzerklärung</a>
                   </label>
-                  {#if form?.fieldErrors?.acceptTerms}
-                    <div class="invalid-feedback">{form.fieldErrors.acceptTerms[0]}</div>
+                  {#if fieldErrors.acceptTerms}
+                    <div class="invalid-feedback d-block">{fieldErrors.acceptTerms}</div>
+                  {/if}
+                </div>
+              </div>
+
+              <!-- Terms -->
+              <div class="mb-4">
+                <div class="form-check">
+                  <input
+                    class="form-check-input"
+                    class:is-invalid={fieldErrors.acceptTerms}
+                    type="checkbox"
+                    id="acceptTerms"
+                    bind:checked={acceptTerms}
+                    required
+                  />
+                  <label class="form-check-label small" for="acceptTerms">
+                    Ich akzeptiere die 
+                    <a href="/terms" target="_blank" class="text-decoration-none fw-semibold">Nutzungsbedingungen</a> 
+                    und die 
+                    <a href="/privacy" target="_blank" class="text-decoration-none fw-semibold">Datenschutzerklärung</a>
+                  </label>
+                  {#if fieldErrors.acceptTerms}
+                    <div class="invalid-feedback d-block">{fieldErrors.acceptTerms}</div>
                   {/if}
                 </div>
               </div>
@@ -201,6 +380,39 @@
                 type="submit"
                 class="btn btn-primary btn-lg w-100 mb-4"
                 disabled={isSubmitting}
+                on:click={async () => {
+                  // Einfache Validierung
+                  if (!firstName || !lastName || !email || !password) {
+                    authError = "Bitte alle Felder ausfüllen.";
+                    return;
+                  }
+                  
+                  if (password !== confirmPassword) {
+                    authError = "Passwörter stimmen nicht überein.";
+                    return;
+                  }
+                  
+                  isSubmitting = true;
+                  authError = "";
+                  
+                  try {
+                    const { data, error } = await authClient.signUp.email({
+                      email: email.trim(),
+                      password: password,
+                      name: `${firstName.trim()} ${lastName.trim()}`
+                    });
+                    
+                    if (error) {
+                      authError = error.message || "Registrierung fehlgeschlagen";
+                    } else {
+                      goto("/dashboard");
+                    }
+                  } catch (err) {
+                    authError = "Ein unerwarteter Fehler ist aufgetreten.";
+                  } finally {
+                    isSubmitting = false;
+                  }
+                }}
               >
                 {#if isSubmitting}
                   <span class="spinner-border spinner-border-sm me-2"></span>
@@ -329,16 +541,30 @@
     backdrop-filter: blur(10px);
   }
 
-  .alert-success {
-    background: rgba(25, 135, 84, 0.1);
-    border: 1px solid rgba(25, 135, 84, 0.2);
-    color: #198754;
-    backdrop-filter: blur(10px);
+  .invalid-feedback {
+    display: block;
+    font-size: 0.875rem;
+    margin-top: 0.25rem;
   }
 
-  .form-text small {
-    display: flex;
-    align-items: center;
-    margin-top: 0.25rem;
+  @media (max-width: 991.98px) {
+    .bg-gradient-primary {
+      min-height: 40vh;
+    }
+    .branding-content {
+      padding: 2rem 0;
+    }
+    .benefit-card {
+      margin-bottom: 1rem;
+    }
+  }
+
+  @media (max-width: 575.98px) {
+    .register-form {
+      padding: 1rem !important;
+    }
+    .brand-section h1 {
+      font-size: 2.5rem !important;
+    }
   }
 </style>

@@ -33,7 +33,7 @@ export async function getDb() {
 export async function getCustomerById(id) {
   const database = await getDb();
   return database
-    .collection('customers')
+    .collection('user')
     .findOne({ _id: new ObjectId(id) });
 }
 
@@ -41,14 +41,14 @@ export async function getCustomerById(id) {
 export async function getUserByEmail(email) {
   const database = await getDb();
   return database
-    .collection('customers')
+    .collection('user')
     .findOne({ email: email.toLowerCase() });
 }
 
 /** Legt einen neuen User an, wirft Error, wenn Benutzer bereits existiert */
 export async function createUser(email, password, firstName, lastName) {
   const database = await getDb();
-  const users = database.collection('customers');
+  const users = database.collection('user');
 
   const existingUser = await users.findOne({ email: email.toLowerCase() });
   if (existingUser) {
@@ -78,7 +78,7 @@ export async function createUser(email, password, firstName, lastName) {
 /** Prüft E-Mail und Passwort, gibt User‐Objekt (ohne Hash) zurück oder null */
 export async function authenticateUser(email, password) {
   const database = await getDb();
-  const users = database.collection('customers');
+  const users = database.collection('user');
 
   const user = await users.findOne({ email: email.toLowerCase() });
   if (!user) return null;

@@ -1,6 +1,5 @@
 <script>
   import { page } from "$app/stores";
-  import { portfolioStore } from "$lib/stores/portfolio.svelte.js";
   import { authClient } from "$lib/auth-client";
   import { goto } from "$app/navigation";
 
@@ -8,35 +7,17 @@
   const session = authClient.useSession();
 
   // Ableitung, ob der Nutzer eingeloggt ist
-  const isAuthenticated = $derived(
-    () => !!$session.data
-  );
+  const isAuthenticated = $derived(!!$session.data);
 
   // Eingeloggte Nutzer‐Daten
-  const user = $derived(
-    () => $session.data?.user
-  );
+  const user = $derived($session.data?.user);
 
-  // Aktueller Pfad (z.B. "/dashboard")
-  const currentPath = $derived(
-    () => $page.url.pathname
-  );
-
-  // Gesamtwert aus dem Portfolio‐Store
-  const totalValue = $derived(
-    () => $portfolioStore.totalValue
-  );
-
-  // Portfolio laden, sobald Session‐Daten existieren
-  $effect(() => {
-    if ($session.data) {
-      portfolioStore.loadPortfolio();
-    }
-  });
+  // Aktueller Pfad
+  const currentPath = $derived($page.url.pathname);
 
   // Helper: Ist dieser Pfad aktiv?
   function isActive(path) {
-    return $currentPath === path || $currentPath.startsWith(path + "/");
+    return currentPath === path || currentPath.startsWith(path + "/");
   }
 
   // Abmelden über Better Auth
@@ -71,51 +52,41 @@
 
     <!-- Navigation Content -->
     <div class="navbar-content collapse navbar-collapse" id="navbarContent">
-      {#if $isAuthenticated}
-        <!-- Main Navigation -->
-        <ul class="nav-links">
-          <li class="nav-item">
-            <a
-              class="nav-link"
-              class:active={isActive("/dashboard")}
-              href="/dashboard"
-            >
-              <i class="bi bi-speedometer2 nav-icon"></i>
-              <span>Dashboard</span>
-            </a>
-          </li>
-          <li class="nav-item">
-            <a
-              class="nav-link"
-              class:active={isActive("/portfolio")}
-              href="/portfolio"
-            >
-              <i class="bi bi-briefcase nav-icon"></i>
-              <span>Portfolio</span>
-            </a>
-          </li>
-          <li class="nav-item">
-            <a
-              class="nav-link"
-              class:active={isActive("/assets")}
-              href="/assets"
-            >
-              <i class="bi bi-gem nav-icon"></i>
-              <span>Assets</span>
-            </a>
-          </li>
-          <li class="nav-item">
-            <a
-              class="nav-link"
-              class:active={isActive("/transactions")}
-              href="/transactions"
-            >
-              <i class="bi bi-arrow-left-right nav-icon"></i>
-              <span>Transaktionen</span>
-            </a>
-          </li>
-        </ul>
+      <!-- Main Navigation - IMMER ANZEIGEN -->
+      <ul class="nav-links">
+        <li class="nav-item">
+          <a
+            class="nav-link"
+            class:active={isActive("/dashboard")}
+            href="/dashboard"
+          >
+            <i class="bi bi-speedometer2 nav-icon"></i>
+            <span>Dashboard</span>
+          </a>
+        </li>
+        <li class="nav-item">
+          <a
+            class="nav-link"
+            class:active={isActive("/assets")}
+            href="/assets"
+          >
+            <i class="bi bi-gem nav-icon"></i>
+            <span>Assets</span>
+          </a>
+        </li>
+        <li class="nav-item">
+          <a
+            class="nav-link"
+            class:active={isActive("/transactions")}
+            href="/transactions"
+          >
+            <i class="bi bi-arrow-left-right nav-icon"></i>
+            <span>Transaktionen</span>
+          </a>
+        </li>
+      </ul>
 
+      {#if isAuthenticated}
         <!-- User Menu -->
         <div class="user-menu">
           <div class="dropdown">
@@ -130,14 +101,7 @@
               </div>
               <div class="user-info">
                 <div class="user-name">
-                  {$user?.firstName} {$user?.lastName}
-                </div>
-                <div class="user-portfolio">
-                  {new Intl.NumberFormat("de-CH", {
-                    style: "currency",
-                    currency: "CHF",
-                    notation: "compact"
-                  }).format($totalValue)}
+                  {user?.name || user?.email}
                 </div>
               </div>
               <i class="bi bi-chevron-down dropdown-arrow"></i>
@@ -154,7 +118,7 @@
               <li>
                 <button
                   class="dropdown-item logout-item"
-                  onclick={handleLogout}
+                  on:click={handleLogout}
                 >
                   <i class="bi bi-box-arrow-right dropdown-icon"></i>
                   Abmelden
@@ -183,6 +147,8 @@
     </div>
   </div>
 </nav>
+
+<slot />
 
 <style>
   .modern-navbar {

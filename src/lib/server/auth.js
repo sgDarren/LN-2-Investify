@@ -9,6 +9,7 @@ const db = client.db("investify");
 export const auth = betterAuth({
   database: mongodbAdapter(db),
   emailAndPassword: {
-    enabled: true
+    enabled: true,
+    requireEmailVerification: false // für Entwicklung
   }
 });

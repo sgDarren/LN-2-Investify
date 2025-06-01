@@ -2,15 +2,35 @@
 <script>
   import { enhance } from '$app/forms';
   import { invalidateAll } from '$app/navigation';
+  import { goto } from "$app/navigation";
+  import PortfolioCard from '$lib/components/PortfolioCard.svelte';
   import PieChart from '$lib/components/PieChart.svelte';
   
-  // Props von Server
+  // Props von +page.server.js
   const { data, form } = $props();
   
-  // State für Modal
-  let showModal = $state(false);
-  let newPortfolioName = $state('');
-  let isSubmitting = $state(false);
+  // State für Portfolio-Erstellung
+  let showCreateForm = $state(false);
+  let portfolioName = $state("");
+  let isCreating = $state(false);
+  let isLoading = $state(true);
+  
+  // Simulate loading state
+  $effect(() => {
+    // Set loading to false after data is available
+    if (data) {
+      setTimeout(() => {
+        isLoading = false;
+      }, 500); // Small delay for smooth transition
+    }
+  });
+  
+  // Redirect wenn nicht eingeloggt (falls data.user nicht vorhanden)
+  $effect(() => {
+    if (!isLoading && !data.user) {
+      goto("/auth/login");
+    }
+  });
   
   // Formatierung
   function formatCurrency(value, currency = 'CHF') {
@@ -32,461 +52,448 @@
       year: 'numeric'
     });
   }
-  
-  // Modal Handlers
-  function openModal() {
-    showModal = true;
-    newPortfolioName = '';
-  }
-  
-  function closeModal() {
-    showModal = false;
-    newPortfolioName = '';
-  }
 </script>
 
 <svelte:head>
-  <title>Dashboard - Investify</title>
+  <title>Dashboard – Investify</title>
 </svelte:head>
 
 <div class="container-fluid py-4">
   <!-- Header -->
   <div class="row mb-4">
     <div class="col">
-      <h1 class="h2 mb-1">Willkommen zurück, {data.user?.firstName}!</h1>
-      <p class="text-muted">Hier ist Ihre aktuelle Portfolio-Übersicht</p>
+      <h1 class="h2 {isLoading ? 'skeleton skeleton-text' : ''}">
+        {#if !isLoading}
+          Willkommen zurück, {data.user?.firstName || data.user?.email?.split('@')[0]}!
+        {:else}
+          <span class="invisible">Willkommen zurück, Benutzer!</span>
+        {/if}
+      </h1>
+      <p class="text-muted {isLoading ? 'skeleton skeleton-text w-50' : ''}">
+        {#if !isLoading}
+          Hier ist Ihre Investitionsübersicht
+        {:else}
+          <span class="invisible">Hier ist Ihre Investitionsübersicht</span>
+        {/if}
+      </p>
     </div>
   </div>
 
-  <!-- Fehler-Anzeige -->
-  {#if data.error}
-    <div class="alert alert-danger" role="alert">
-      <i class="bi bi-exclamation-triangle me-2"></i>{data.error}
-    </div>
+  <!-- Error Messages -->
+  {#if !isLoading}
+    {#if data.error}
+      <div class="alert alert-warning" role="alert">
+        <i class="bi bi-exclamation-triangle me-2"></i>{data.error}
+      </div>
+    {/if}
+
+    {#if form?.error}
+      <div class="alert alert-danger alert-dismissible fade show" role="alert">
+        <i class="bi bi-exclamation-triangle me-2"></i>{form.error}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+      </div>
+    {/if}
+
+    {#if form?.success}
+      <div class="alert alert-success alert-dismissible fade show" role="alert">
+        <i class="bi bi-check-circle me-2"></i>{form.message || 'Portfolio erfolgreich erstellt'}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+      </div>
+    {/if}
   {/if}
 
-  {#if form?.error}
-    <div class="alert alert-danger alert-dismissible fade show" role="alert">
-      <i class="bi bi-exclamation-triangle me-2"></i>{form.error}
-      <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-    </div>
-  {/if}
-
-  {#if form?.success}
-    <div class="alert alert-success alert-dismissible fade show" role="alert">
-      <i class="bi bi-check-circle me-2"></i>{form.message}
-      <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-    </div>
-  {/if}
-
-  <!-- KPI Cards -->
+  <!-- KPIs -->
   <div class="row g-3 mb-4">
-    <!-- Gesamtwert -->
-    <div class="col-md-6 col-lg-3">
-      <div class="card border-0 shadow-sm">
-        <div class="card-body">
-          <div class="d-flex justify-content-between align-items-start mb-2">
-            <div>
-              <p class="text-muted small mb-1">Gesamtwert</p>
-              <h3 class="mb-0">{formatCurrency(data.kpis.totalValue)}</h3>
-            </div>
-            <div class="icon-box bg-primary bg-opacity-10 text-primary">
-              <i class="bi bi-wallet2"></i>
-            </div>
-          </div>
-          <div class="small text-muted">
-            <i class="bi bi-arrow-up-right text-success me-1"></i>
-            Aktueller Marktwert
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Gesamtrendite -->
-    <div class="col-md-6 col-lg-3">
-      <div class="card border-0 shadow-sm">
-        <div class="card-body">
-          <div class="d-flex justify-content-between align-items-start mb-2">
-            <div>
-              <p class="text-muted small mb-1">Gesamtrendite</p>
-              <h3 class="mb-0 {data.kpis.totalGainLoss >= 0 ? 'text-success' : 'text-danger'}">
-                {formatCurrency(data.kpis.totalGainLoss)}
-              </h3>
-            </div>
-            <div class="icon-box bg-{data.kpis.totalGainLoss >= 0 ? 'success' : 'danger'} bg-opacity-10 text-{data.kpis.totalGainLoss >= 0 ? 'success' : 'danger'}">
-              <i class="bi bi-graph-{data.kpis.totalGainLoss >= 0 ? 'up' : 'down'}-arrow"></i>
-            </div>
-          </div>
-          <div class="small {data.kpis.totalGainLossPercent >= 0 ? 'text-success' : 'text-danger'}">
-            <i class="bi bi-{data.kpis.totalGainLossPercent >= 0 ? 'arrow-up' : 'arrow-down'} me-1"></i>
-            {formatPercent(data.kpis.totalGainLossPercent)}
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Tagesveränderung -->
-    <div class="col-md-6 col-lg-3">
-      <div class="card border-0 shadow-sm">
-        <div class="card-body">
-          <div class="d-flex justify-content-between align-items-start mb-2">
-            <div>
-              <p class="text-muted small mb-1">Tagesveränderung</p>
-              <h3 class="mb-0 {data.kpis.dayChange >= 0 ? 'text-success' : 'text-danger'}">
-                {formatCurrency(data.kpis.dayChange)}
-              </h3>
-            </div>
-            <div class="icon-box bg-info bg-opacity-10 text-info">
-              <i class="bi bi-calendar-day"></i>
-            </div>
-          </div>
-          <div class="small {data.kpis.dayChangePercent >= 0 ? 'text-success' : 'text-danger'}">
-            <i class="bi bi-{data.kpis.dayChangePercent >= 0 ? 'arrow-up' : 'arrow-down'} me-1"></i>
-            {formatPercent(data.kpis.dayChangePercent)}
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Investiert -->
-    <div class="col-md-6 col-lg-3">
-      <div class="card border-0 shadow-sm">
-        <div class="card-body">
-          <div class="d-flex justify-content-between align-items-start mb-2">
-            <div>
-              <p class="text-muted small mb-1">Investiert</p>
-              <h3 class="mb-0">{formatCurrency(data.kpis.totalInvestment)}</h3>
-            </div>
-            <div class="icon-box bg-warning bg-opacity-10 text-warning">
-              <i class="bi bi-cash-stack"></i>
-            </div>
-          </div>
-          <div class="small text-muted">
-            <i class="bi bi-info-circle me-1"></i>
-            Gesamtinvestition
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="row g-4">
-    <!-- Portfolio-Verteilung -->
-    <div class="col-lg-8">
-      <div class="card border-0 shadow-sm h-100">
-        <div class="card-header bg-white border-bottom-0 d-flex justify-content-between align-items-center">
-          <h5 class="mb-0">Portfolio-Verteilung</h5>
-          <button class="btn btn-sm btn-primary" onclick={openModal}>
-            <i class="bi bi-plus-circle me-1"></i>Neues Portfolio
-          </button>
-        </div>
-        <div class="card-body">
-          <div class="row">
-            <div class="col-md-6">
-              {#if data.pieData.labels.length > 0}
-                <PieChart 
-                  labels={data.pieData.labels}
-                  values={data.pieData.values}
-                  colors={data.pieData.colors}
-                />
-              {:else}
-                <div class="text-center py-5">
-                  <i class="bi bi-pie-chart display-1 text-muted"></i>
-                  <p class="text-muted mt-3">Noch keine Portfolios vorhanden</p>
-                  <button class="btn btn-primary" onclick={openModal}>
-                    Erstes Portfolio erstellen
-                  </button>
-                </div>
-              {/if}
-            </div>
-            <div class="col-md-6">
-              <div class="portfolio-list">
-                {#each data.portfolios as portfolio}
-                  <div class="portfolio-item">
-                    <div class="d-flex justify-content-between align-items-center">
-                      <div>
-                        <h6 class="mb-1">{portfolio.name}</h6>
-                        <small class="text-muted">
-                          {formatCurrency(portfolio.value)} 
-                          <span class="{portfolio.gainLoss >= 0 ? 'text-success' : 'text-danger'}">
-                            ({formatPercent(portfolio.gainLossPercent)})
-                          </span>
-                        </small>
-                      </div>
-                      <a href="/portfolio/{portfolio.id}" class="btn btn-sm btn-outline-primary">
-                        <i class="bi bi-eye"></i>
-                      </a>
-                    </div>
-                  </div>
-                {/each}
+    {#each [
+      { icon: 'bi-wallet2', color: 'primary', title: 'Gesamtwert' },
+      { icon: 'bi-graph-up-arrow', color: 'success', title: 'Gewinn/Verlust' },
+      { icon: 'bi-clock-history', color: 'info', title: 'Tagesänderung' },
+      { icon: 'bi-briefcase', color: 'secondary', title: 'Portfolios' }
+    ] as kpi, index}
+      <div class="col-md-3">
+        <div class="card kpi-card">
+          <div class="card-body">
+            <div class="d-flex align-items-center">
+              <div class="kpi-icon bg-{kpi.color} bg-opacity-10">
+                <i class="bi {kpi.icon} text-{kpi.color}"></i>
+              </div>
+              <div class="ms-3 {isLoading ? 'flex-grow-1' : ''}">
+                <h6 class="card-subtitle mb-1 text-muted">{kpi.title}</h6>
+                {#if isLoading}
+                  <div class="skeleton skeleton-text" style="width: 80%; height: 28px;"></div>
+                {:else}
+                  <h4 class="card-title mb-0 {index === 1 || index === 2 ? (data.kpis.totalGainLoss >= 0 ? 'text-success' : 'text-danger') : ''}">
+                    {#if index === 0}
+                      {formatCurrency(data.kpis.totalValue)}
+                    {:else if index === 1}
+                      {formatPercent(data.kpis.totalGainLossPercent)}
+                    {:else if index === 2}
+                      {formatPercent(data.kpis.dayChangePercent)}
+                    {:else}
+                      {data.portfolios.length}
+                    {/if}
+                  </h4>
+                {/if}
               </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
+    {/each}
+  </div>
 
-    <!-- Letzte Transaktionen -->
-    <div class="col-lg-4">
-      <div class="card border-0 shadow-sm h-100">
-        <div class="card-header bg-white border-bottom-0 d-flex justify-content-between align-items-center">
-          <h5 class="mb-0">Letzte Transaktionen</h5>
-          <a href="/transactions" class="btn btn-sm btn-outline-primary">Alle</a>
+  <!-- Portfolio Distribution Chart -->
+  <div class="row mb-4">
+    <div class="col-lg-8">
+      <div class="card">
+        <div class="card-header bg-white">
+          <h5 class="card-title mb-0">
+            <i class="bi bi-pie-chart me-2"></i>
+            Portfolio-Verteilung
+          </h5>
         </div>
         <div class="card-body">
-          {#if data.recentTransactions.length > 0}
-            <div class="transaction-list">
-              {#each data.recentTransactions as transaction}
-                <div class="transaction-item">
-                  <div class="d-flex justify-content-between align-items-start">
-                    <div>
-                      <div class="d-flex align-items-center mb-1">
-                        <span class="badge bg-{transaction.type === 'buy' ? 'success' : 'danger'} me-2">
-                          {transaction.type === 'buy' ? 'Kauf' : 'Verkauf'}
-                        </span>
-                        <strong>{transaction.symbol}</strong>
-                      </div>
-                      <small class="text-muted">
-                        {transaction.quantity} @ {formatCurrency(transaction.price)}
-                      </small>
-                    </div>
-                    <div class="text-end">
-                      <div class="fw-bold">{formatCurrency(transaction.total_amount)}</div>
-                      <small class="text-muted">{formatDate(transaction.transaction_date)}</small>
-                    </div>
-                  </div>
+          {#if isLoading}
+            <div class="d-flex justify-content-center align-items-center" style="height: 300px;">
+              <div class="text-center">
+                <div class="spinner-border text-primary mb-3" role="status">
+                  <span class="visually-hidden">Lädt...</span>
                 </div>
-              {/each}
+                <p class="text-muted">Chart wird geladen...</p>
+              </div>
             </div>
+          {:else if data.portfolios.length > 0}
+            <PieChart 
+              labels={data.pieData.labels} 
+              values={data.pieData.values}
+              colors={data.pieData.colors}
+            />
           {:else}
-            <div class="text-center py-4">
-              <i class="bi bi-clock-history display-4 text-muted"></i>
-              <p class="text-muted mt-2">Noch keine Transaktionen</p>
+            <div class="text-center py-5">
+              <i class="bi bi-pie-chart display-1 text-muted"></i>
+              <p class="text-muted mt-3">Noch keine Portfolios vorhanden</p>
             </div>
           {/if}
         </div>
       </div>
     </div>
+    <div class="col-lg-4">
+      <div class="card h-100">
+        <div class="card-header bg-white">
+          <h5 class="card-title mb-0">
+            <i class="bi bi-info-circle me-2"></i>
+            Zusammenfassung
+          </h5>
+        </div>
+        <div class="card-body">
+          {#each ['Investiert:', 'Aktueller Wert:', 'Gesamtrendite:'] as label, i}
+            <div class="summary-item mb-3 {i === 2 ? '' : ''}">
+              <span class="text-muted">{label}</span>
+              {#if isLoading}
+                <span class="skeleton skeleton-text" style="width: 100px; height: 20px; display: inline-block;"></span>
+              {:else}
+                <span class="fw-bold float-end {i === 2 && data.kpis.totalGainLoss < 0 ? 'text-danger' : i === 2 && data.kpis.totalGainLoss >= 0 ? 'text-success' : ''}">
+                  {#if i === 0}
+                    {formatCurrency(data.kpis.totalInvestment)}
+                  {:else if i === 1}
+                    {formatCurrency(data.kpis.totalValue)}
+                  {:else}
+                    {formatCurrency(data.kpis.totalGainLoss)}
+                  {/if}
+                </span>
+              {/if}
+            </div>
+            {#if i === 1}<hr>{/if}
+          {/each}
+        </div>
+      </div>
+    </div>
   </div>
 
-  <!-- Quick Actions -->
-  <div class="row mt-4">
-    <div class="col">
-      <div class="card border-0 shadow-sm">
-        <div class="card-body">
-          <h5 class="card-title mb-3">Schnellaktionen</h5>
-          <div class="row g-3">
-            <div class="col-md-3">
-              <a href="/assets" class="btn btn-outline-primary w-100">
-                <i class="bi bi-search me-2"></i>Assets durchsuchen
-              </a>
-            </div>
-            <div class="col-md-3">
-              <a href="/portfolio" class="btn btn-outline-success w-100">
-                <i class="bi bi-briefcase me-2"></i>Portfolio verwalten
-              </a>
-            </div>
-            <div class="col-md-3">
-              <a href="/transactions" class="btn btn-outline-info w-100">
-                <i class="bi bi-list-ul me-2"></i>Transaktionen
-              </a>
-            </div>
-            <div class="col-md-3">
-              <a href="/reports" class="btn btn-outline-warning w-100">
-                <i class="bi bi-file-earmark-bar-graph me-2"></i>Berichte
-              </a>
+  <!-- Recent Transactions -->
+  {#if !isLoading && data.recentTransactions && data.recentTransactions.length > 0}
+    <div class="row mb-4">
+      <div class="col">
+        <div class="card">
+          <div class="card-header bg-white d-flex justify-content-between align-items-center">
+            <h5 class="card-title mb-0">
+              <i class="bi bi-clock-history me-2"></i>
+              Letzte Transaktionen
+            </h5>
+            <a href="/transactions" class="btn btn-sm btn-outline-primary">Alle anzeigen</a>
+          </div>
+          <div class="card-body">
+            <div class="table-responsive">
+              <table class="table table-hover">
+                <thead>
+                  <tr>
+                    <th>Datum</th>
+                    <th>Portfolio</th>
+                    <th>Typ</th>
+                    <th>Symbol</th>
+                    <th class="text-end">Menge</th>
+                    <th class="text-end">Preis</th>
+                    <th class="text-end">Gesamt</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each data.recentTransactions as transaction}
+                    <tr>
+                      <td>{formatDate(transaction.transaction_date)}</td>
+                      <td>{transaction.portfolio_name}</td>
+                      <td>
+                        <span class="badge bg-{transaction.type === 'buy' ? 'success' : 'danger'}">
+                          {transaction.type === 'buy' ? 'Kauf' : 'Verkauf'}
+                        </span>
+                      </td>
+                      <td>
+                        <strong>{transaction.symbol}</strong>
+                      </td>
+                      <td class="text-end">{transaction.quantity}</td>
+                      <td class="text-end">{formatCurrency(transaction.price, transaction.currency)}</td>
+                      <td class="text-end fw-bold">
+                        {formatCurrency(transaction.total_amount, transaction.currency)}
+                      </td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
       </div>
     </div>
+  {/if}
+
+  <!-- Portfolios Section -->
+  <div class="row mb-4">
+    <div class="col">
+      <h3 class="mb-3">Meine Portfolios</h3>
+      
+      <div class="row g-3">
+        {#if isLoading}
+          <!-- Skeleton Portfolio Cards -->
+          {#each [1, 2, 3] as _}
+            <div class="col-md-6 col-lg-4">
+              <div class="card skeleton-card">
+                <div class="card-body">
+                  <div class="skeleton skeleton-text mb-2" style="width: 60%; height: 24px;"></div>
+                  <div class="skeleton skeleton-text mb-3" style="width: 80%; height: 32px;"></div>
+                  <div class="skeleton skeleton-text mb-3" style="width: 40%; height: 16px;"></div>
+                  <div class="skeleton skeleton-button" style="width: 100%; height: 38px;"></div>
+                </div>
+              </div>
+            </div>
+          {/each}
+        {:else}
+          {#each data.portfolios as portfolio}
+            <div class="col-md-6 col-lg-4">
+              <PortfolioCard {portfolio} />
+            </div>
+          {/each}
+        {/if}
+      </div>
+    </div>
   </div>
+
+  <!-- Create Portfolio Section -->
+  {#if !isLoading}
+    <div class="row">
+      <div class="col text-center">
+        {#if !showCreateForm}
+          <button 
+            class="btn btn-primary btn-lg"
+            onclick={() => showCreateForm = true}
+          >
+            <i class="bi bi-plus-circle me-2"></i>Neues Portfolio erstellen
+          </button>
+        {:else}
+          <div class="card mx-auto" style="max-width: 600px;">
+            <div class="card-body">
+              <h5 class="card-title mb-3">Neues Portfolio erstellen</h5>
+              <form 
+                method="POST" 
+                action="?/createPortfolio"
+                use:enhance={() => {
+                  isCreating = true;
+                  return async ({ result, update }) => {
+                    await update();
+                    isCreating = false;
+                    
+                    if (result.type === 'success' && form?.success) {
+                      showCreateForm = false;
+                      portfolioName = "";
+                    }
+                  };
+                }}
+              >
+                <div class="row g-2">
+                  <div class="col">
+                    <input
+                      type="text"
+                      class="form-control form-control-lg"
+                      name="name"
+                      placeholder="Portfolio Name eingeben..."
+                      bind:value={portfolioName}
+                      required
+                      disabled={isCreating}
+                    />
+                  </div>
+                  <div class="col-auto">
+                    <button type="submit" class="btn btn-success btn-lg" disabled={isCreating}>
+                      {#if isCreating}
+                        <span class="spinner-border spinner-border-sm me-1"></span>
+                        Erstelle...
+                      {:else}
+                        Erstellen
+                      {/if}
+                    </button>
+                    <button 
+                      type="button" 
+                      class="btn btn-secondary btn-lg ms-2"
+                      onclick={() => {showCreateForm = false; portfolioName = "";}}
+                      disabled={isCreating}
+                    >
+                      Abbrechen
+                    </button>
+                  </div>
+                </div>
+              </form>
+            </div>
+          </div>
+        {/if}
+      </div>
+    </div>
+  {/if}
 </div>
 
-<!-- Modal für neues Portfolio -->
-{#if showModal}
-  <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
-    <div class="modal-dialog modal-dialog-centered">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h5 class="modal-title">Neues Portfolio erstellen</h5>
-          <button type="button" class="btn-close" onclick={closeModal}></button>
-        </div>
-        <form 
-          method="POST" 
-          action="?/createPortfolio"
-          use:enhance={() => {
-            isSubmitting = true;
-            return async ({ update }) => {
-              await update();
-              isSubmitting = false;
-              if (form?.success) {
-                closeModal();
-                await invalidateAll();
-              }
-            };
-          }}
-        >
-          <div class="modal-body">
-            <div class="mb-3">
-              <label for="portfolioName" class="form-label">Portfolio Name</label>
-              <input
-                type="text"
-                class="form-control"
-                id="portfolioName"
-                name="name"
-                bind:value={newPortfolioName}
-                placeholder="z.B. Langzeit-Investitionen"
-                required
-                disabled={isSubmitting}
-              />
-              <div class="form-text">Wählen Sie einen aussagekräftigen Namen für Ihr Portfolio</div>
-            </div>
-          </div>
-          <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" onclick={closeModal} disabled={isSubmitting}>
-              Abbrechen
-            </button>
-            <button type="submit" class="btn btn-primary" disabled={isSubmitting || !newPortfolioName.trim()}>
-              {#if isSubmitting}
-                <span class="spinner-border spinner-border-sm me-2"></span>
-                Erstelle...
-              {:else}
-                <i class="bi bi-plus-circle me-2"></i>
-                Portfolio erstellen
-              {/if}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  </div>
-{/if}
-
 <style>
-  /* KPI Cards */
-  .icon-box {
+  /* Skeleton Loading Styles */
+  .skeleton {
+    position: relative;
+    overflow: hidden;
+    background-color: #e0e0e0;
+    border-radius: 4px;
+  }
+  
+  .skeleton::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    transform: translateX(-100%);
+    background-image: linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0) 0,
+      rgba(255, 255, 255, 0.2) 20%,
+      rgba(255, 255, 255, 0.5) 60%,
+      rgba(255, 255, 255, 0)
+    );
+    animation: shimmer 2s infinite;
+  }
+  
+  @keyframes shimmer {
+    100% {
+      transform: translateX(100%);
+    }
+  }
+  
+  .skeleton-text {
+    display: inline-block;
+    height: 1em;
+    margin-bottom: 0.25em;
+  }
+  
+  .skeleton-button {
+    border-radius: 0.375rem;
+  }
+  
+  .skeleton-card {
+    min-height: 200px;
+  }
+  
+  /* Existing Styles */
+  .kpi-card {
+    border: none;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    transition: all 0.3s ease;
+  }
+  
+  .kpi-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  }
+  
+  .kpi-icon {
     width: 48px;
     height: 48px;
+    border-radius: 12px;
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: 12px;
     font-size: 1.5rem;
   }
-
-  /* Portfolio List */
-  .portfolio-list {
-    max-height: 300px;
-    overflow-y: auto;
-  }
-
-  .portfolio-item {
-    padding: 12px;
-    border-bottom: 1px solid #f0f0f0;
-    transition: background-color 0.2s ease;
-  }
-
-  .portfolio-item:last-child {
-    border-bottom: none;
-  }
-
-  .portfolio-item:hover {
-    background-color: #f8f9fa;
-  }
-
-  /* Transaction List */
-  .transaction-list {
-    max-height: 400px;
-    overflow-y: auto;
-  }
-
-  .transaction-item {
-    padding: 12px;
-    border-bottom: 1px solid #f0f0f0;
-    transition: background-color 0.2s ease;
-  }
-
-  .transaction-item:last-child {
-    border-bottom: none;
-  }
-
-  .transaction-item:hover {
-    background-color: #f8f9fa;
-  }
-
-  /* Cards */
+  
   .card {
+    border: 1px solid rgba(0, 0, 0, 0.08);
     border-radius: 12px;
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
   }
-
-  .card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1) !important;
-  }
-
+  
   .card-header {
-    padding: 1.25rem;
-    font-weight: 600;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+    padding: 1rem 1.5rem;
   }
-
-  /* Badges */
+  
+  .summary-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  
+  .text-success {
+    color: #28a745 !important;
+  }
+  
+  .text-danger {
+    color: #dc3545 !important;
+  }
+  
+  .btn-primary {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border: none;
+    padding: 0.75rem 2rem;
+    font-weight: 500;
+    transition: all 0.3s ease;
+  }
+  
+  .btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+  }
+  
+  .table th {
+    font-weight: 600;
+    color: #6c757d;
+    border-bottom: 2px solid #e0e0e0;
+  }
+  
+  .table td {
+    vertical-align: middle;
+  }
+  
   .badge {
     padding: 0.375rem 0.75rem;
     font-weight: 500;
-    font-size: 0.75rem;
   }
-
-  /* Scrollbar Styling */
-  .portfolio-list::-webkit-scrollbar,
-  .transaction-list::-webkit-scrollbar {
-    width: 6px;
+  
+  .w-50 {
+    width: 50% !important;
   }
-
-  .portfolio-list::-webkit-scrollbar-track,
-  .transaction-list::-webkit-scrollbar-track {
-    background: #f1f1f1;
-    border-radius: 3px;
-  }
-
-  .portfolio-list::-webkit-scrollbar-thumb,
-  .transaction-list::-webkit-scrollbar-thumb {
-    background: #888;
-    border-radius: 3px;
-  }
-
-  .portfolio-list::-webkit-scrollbar-thumb:hover,
-  .transaction-list::-webkit-scrollbar-thumb:hover {
-    background: #555;
-  }
-
-  /* Modal Animation */
-  .modal {
-    animation: fadeIn 0.2s ease;
-  }
-
-  .modal-dialog {
-    animation: slideIn 0.3s ease;
-  }
-
-  @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
-
-  @keyframes slideIn {
-    from { transform: translateY(-50px); opacity: 0; }
-    to { transform: translateY(0); opacity: 1; }
-  }
-
-  /* Responsive */
-  @media (max-width: 768px) {
-    .icon-box {
-      width: 40px;
-      height: 40px;
-      font-size: 1.25rem;
-    }
+  
+  .invisible {
+    visibility: hidden;
   }
 </style>
-           
