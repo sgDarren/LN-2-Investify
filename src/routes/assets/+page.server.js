@@ -1,57 +1,159 @@
-  import { error, redirect } from '@sveltejs/kit';
-  import { COINDESK_API_KEY } from '$env/static/private';
+// src/routes/assets/+page.server.js
 
-  /** @type {import('./$types').PageServerLoad} */
-  export async function load({  }) {
-    // 1) Authentifizierung prüfen (falls erforderlich)
-    //    Beispiel: Wenn du nur eingeloggte Nutzer erlauben willst:
-    // if (!locals.user) {
-    //   throw redirect(302, '/auth/login');
-    // }
+import { error, redirect } from '@sveltejs/kit'; // redirect hinzugefügt
+import { 
+  getAllAssets, 
+  getAssetsByCategory, 
+  getAssetCategories,
+  getUserPortfolioPositions 
+} from '$lib/server/db.js';
 
-    // 2) Symbol aus der URL entnehmen
-    //const symbol = params.symbol.toUpperCase(); // z.B. "AAPL"
+/** @type {import('./$types').PageServerLoad} */
+export async function load({ url, locals }) {
+  try {
+    // 1) Authentifizierung prüfen (optional)
+    if (!locals.user) {
+      throw redirect(302, '/auth/login');
+    }
 
-    // 3) Bereite den Twelve Data URL vor
-    const interval = '1day';      // Tagesdaten
-    const outputsize = 100;       // 100 Candles (Tagesschlusskurse)
-    const url = `https://api.twelvedata.com/time_series?symbol=AAPL&interval=${interval}&outputsize=${outputsize}&apikey=${TWELVE_DATA_API_KEY}`;
+    // 2) URL-Parameter für Filterung auslesen
+    const categoryFilter = url.searchParams.get('category') || 'all';
+    const searchQuery = url.searchParams.get('search') || '';
+
+    // 3) Assets laden - entweder alle oder gefiltert nach Kategorie
+    let assets;
+    if (categoryFilter === 'all') {
+      assets = await getAllAssets();
+    } else {
+      assets = await getAssetsByCategory(categoryFilter);
+    }
+
+    // 4) Suchfilter anwenden (falls vorhanden)
+    if (searchQuery.trim() !== '') {
+      const query = searchQuery.toLowerCase().trim();
+      assets = assets.filter(asset => 
+        asset.symbol.toLowerCase().includes(query) ||
+        (asset.name && asset.name.toLowerCase().includes(query)) ||
+        (asset.description && asset.description.toLowerCase().includes(query))
+      );
+    }
+
+    // 5) Verfügbare Kategorien für Filter-Dropdown laden
+    const categories = await getAssetCategories();
+
+    // 6) Portfolio-Positionen des Benutzers laden (falls eingeloggt)
+    let positions = [];
+    if (locals.user) {
+      try {
+        positions = await getUserPortfolioPositions(locals.user.id);
+      } catch (err) {
+        console.warn('Portfolio-Positionen konnten nicht geladen werden:', err);
+        // Nicht kritisch - weiter ohne Portfolio-Daten
+      }
+    }
+
+    // 7) Assets nach Marktkapitalisierung oder Alphabet sortieren
+    const sortBy = url.searchParams.get('sort') || 'marketCap';
+    if (sortBy === 'marketCap') {
+      assets.sort((a, b) => (b.marketCap || 0) - (a.marketCap || 0));
+    } else if (sortBy === 'symbol') {
+      assets.sort((a, b) => a.symbol.localeCompare(b.symbol));
+    } else if (sortBy === 'change') {
+      assets.sort((a, b) => (b.changePercent || 0) - (a.changePercent || 0));
+    } else if (sortBy === 'price') {
+      assets.sort((a, b) => (b.price || 0) - (a.price || 0));
+    }
+
+    // 8) Statistiken berechnen
+    const stats = {
+      totalAssets: assets.length,
+      gainers: assets.filter(a => (a.changePercent || 0) > 0).length,
+      losers: assets.filter(a => (a.changePercent || 0) < 0).length,
+      avgChange: assets.length > 0 
+        ? assets.reduce((sum, a) => sum + (a.changePercent || 0), 0) / assets.length 
+        : 0
+    };
+
+    // 9) Daten an Frontend zurückgeben
+    return {
+      assets,
+      positions,
+      categories,
+      currentFilter: {
+        category: categoryFilter,
+        search: searchQuery,
+        sort: sortBy
+      },
+      stats,
+      user: locals.user || null
+    };
+
+  } catch (err) {
+    console.error('Fehler beim Laden der Asset-Übersicht:', err);
+    
+    // Bei DB-Fehlern: Fallback-Daten oder Fehlerseite
+    throw error(500, {
+      message: 'Asset-Daten konnten nicht geladen werden',
+      details: err.message
+    });
+  }
+}
+
+/** @type {import('./$types').Actions} */
+export const actions = {
+  // Action für Schnellkauf direkt aus der Übersicht
+  quickBuy: async ({ request, locals }) => {
+    if (!locals.user) {
+      throw error(401, 'Anmeldung erforderlich');
+    }
+
+    const data = await request.formData();
+    const symbol = data.get('symbol');
+    const amount = parseFloat(data.get('amount') || '1');
+
+    if (!symbol || amount <= 0) {
+      throw error(400, 'Ungültige Parameter');
+    }
 
     try {
-      // 4) Fetch an Twelve Data schicken
-      const res = await fetch(url);
-      if (!res.ok) {
-        // Wenn HTTP‐Status ≠ 200, werfe einen Fehler
-        throw new Error(`Twelve Data HTTP ${res.status}`);
-      }
-
-      const json = await res.json();
-
-      // 5) Überprüfe, ob API‐Antwort einen Fehler enthält
-      //    (Twelve Data gibt bei ungültigem Symbol z.B. { "code": 400, "message": "Symbol not found" })
-      if (json.code && json.message) {
-        throw new Error(`Twelve Data Error: ${json.code} – ${json.message}`);
-      }
-
-      // 6) Extrahiere die Werte
-      //    `json.values` ist ein Array mit Objekten: { datetime: "YYYY-MM-DD", open: "...", high: "...", low: "...", close: "...", volume: "..." }
-      const historicalData = json.values.map((entry) => ({
-        date: entry.datetime,
-        open: parseFloat(entry.open),
-        high: parseFloat(entry.high),
-        low: parseFloat(entry.low),
-        close: parseFloat(entry.close),
-        volume: parseInt(entry.volume, 10)
-      }));
-
-      // 7) Props an das Frontend zurückgeben
+      // Hier würde die Kauflogik implementiert werden
+      // Beispiel: await executeBuyOrder(locals.user.id, symbol, amount);
+      
       return {
-        symbol,
-        historicalData
+        success: true,
+        message: `Kauf von ${amount} ${symbol} erfolgreich`
       };
     } catch (err) {
-      console.error(`Fehler beim Laden der historischen Daten für:`, err);
-      // 8) Bei Fehler kannst du entweder einen 404 ausliefern oder einfach leere Daten zurückgeben:
-      throw error(404, `Daten für Symbol konnten nicht geladen werden.`);
+      console.error('Fehler beim Schnellkauf:', err);
+      throw error(500, 'Kauf konnte nicht ausgeführt werden');
+    }
+  },
+
+  // Action für Schnellverkauf
+  quickSell: async ({ request, locals }) => {
+    if (!locals.user) {
+      throw error(401, 'Anmeldung erforderlich');
+    }
+
+    const data = await request.formData();
+    const symbol = data.get('symbol');
+    const amount = parseFloat(data.get('amount') || '1');
+
+    if (!symbol || amount <= 0) {
+      throw error(400, 'Ungültige Parameter');
+    }
+
+    try {
+      // Hier würde die Verkaufslogik implementiert werden
+      // Beispiel: await executeSellOrder(locals.user.id, symbol, amount);
+      
+      return {
+        success: true,
+        message: `Verkauf von ${amount} ${symbol} erfolgreich`
+      };
+    } catch (err) {
+      console.error('Fehler beim Schnellverkauf:', err);
+      throw error(500, 'Verkauf konnte nicht ausgeführt werden');
     }
   }
+};

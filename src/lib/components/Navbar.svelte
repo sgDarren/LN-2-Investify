@@ -50,7 +50,7 @@ async function handleLogout() {
                         <a 
                             class="nav-link" 
                             class:active={isActive('/') && currentPath === '/'}
-                            href="/"
+                            href="/dashboard"
                         >
                             <i class="bi bi-speedometer2 nav-icon"></i>
                             <span>Dashboard</span>
@@ -120,12 +120,6 @@ async function handleLogout() {
                                 <a class="dropdown-item" href="/profile">
                                     <i class="bi bi-person dropdown-icon"></i>
                                     Profil
-                                </a>
-                            </li>
-                            <li>
-                                <a class="dropdown-item" href="/settings">
-                                    <i class="bi bi-gear dropdown-icon"></i>
-                                    Einstellungen
                                 </a>
                             </li>
                             <li><hr class="dropdown-divider"></li>

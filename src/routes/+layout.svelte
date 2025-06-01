@@ -30,7 +30,7 @@ $effect(() => {
 
 <!-- Main content with auth protection -->
 <main class="main-content">
-    {#if !isAuthenticated && !isAuthPage}
+    {#if !isAuthenticated  && !isAuthPage}
         <!-- Redirect non-authenticated users -->
         <div class="container mt-5">
             <div class="row justify-content-center">

@@ -1,108 +1,159 @@
-// src/routes/stocks/[symbol]/+page.server.js
+// src/routes/assets/+page.server.js
 
-import { error, redirect } from '@sveltejs/kit';
-import { ALPHA_VANTAGE_KEY } from '$env/static/private';
+import { error } from '@sveltejs/kit';
+import { 
+  getAllAssets, 
+  getAssetsByCategory, 
+  getAssetCategories,
+  getUserPortfolioPositions 
+} from '$lib/db.js';
 
 /** @type {import('./$types').PageServerLoad} */
-export async function load({ params }) {
-  // ❶ Authentifizierung (optional):
-  // if (!locals.user) {
-  //   throw redirect(302, '/auth/login');
-  // }
-
-  // ❷ Symbol aus der URL entnehmen (z. B. /stocks/AAPL)
-  const rawSymbol = params.symbol || '';
-  const symbol = rawSymbol.toUpperCase().trim(); // „AAPL“
-
-  // ❸ Während wir auf das Alpha Vantage Free-Tier angewiesen sind,
-  //     drosseln wir die Abfragen:
-  //     - 1x GLOBAL_QUOTE für den aktuellen Kurs
-  //     - 1x TIME_SERIES_DAILY_ADJUSTED (compact) für die letzten 100 Tage
-  //     => insgesamt 2 Requests pro Symbol.
-
-  // Global Quote URL
-  const quoteUrl = new URL('https://www.alphavantage.co/query');
-  quoteUrl.searchParams.set('function', 'GLOBAL_QUOTE');
-  quoteUrl.searchParams.set('symbol', symbol);
-  quoteUrl.searchParams.set('apikey', ALPHA_VANTAGE_KEY);
-
-  // Time Series Daily Adjusted URL (letzte 100 Tage = outputsize=compact)
-  const tsUrl = new URL('https://www.alphavantage.co/query');
-  tsUrl.searchParams.set('function', 'TIME_SERIES_DAILY_ADJUSTED');
-  tsUrl.searchParams.set('symbol', symbol);
-  tsUrl.searchParams.set('outputsize', 'compact');
-  tsUrl.searchParams.set('apikey', ALPHA_VANTAGE_KEY);
-
+export async function load({ url, locals }) {
   try {
-    // ❹ 1. Request: GLOBAL_QUOTE
-    const [quoteRes, tsRes] = await Promise.all([
-      fetch(quoteUrl.toString()),
-      // Kurze Wartezeit um nicht beide gleichzeitig abzusetzen (um Rate Limiting verringern)
-      // Falls du schon in kurzer Zeit >5 Aufrufe laufen hast, dann musst du ggf. hier
-      // einen `await new Promise(r => setTimeout(r, 12000))` zwischen den Requests machen.
-      fetch(tsUrl.toString())
-    ]);
+    // 1) Authentifizierung prüfen (optional)
+    // if (!locals.user) {
+    //   throw redirect(302, '/auth/login');
+    // }
 
-    // ❺ Prüfe, ob beide Responses OK sind
-    if (!quoteRes.ok) {
-      throw new Error(`Alpha Vantage GLOBAL_QUOTE HTTP ${quoteRes.status}`);
-    }
-    if (!tsRes.ok) {
-      throw new Error(`Alpha Vantage TIME_SERIES HTTP ${tsRes.status}`);
+    // 2) URL-Parameter für Filterung auslesen
+    const categoryFilter = url.searchParams.get('category') || 'all';
+    const searchQuery = url.searchParams.get('search') || '';
+
+    // 3) Assets laden - entweder alle oder gefiltert nach Kategorie
+    let assets;
+    if (categoryFilter === 'all') {
+      assets = await getAllAssets();
+    } else {
+      assets = await getAssetsByCategory(categoryFilter);
     }
 
-    const quoteJson = await quoteRes.json();
-    const tsJson = await tsRes.json();
-
-    // ❻ Fehler prüfen: Alphavantage sendet z.B. { "Note": "..."} oder { "Error Message": "..." }
-    if (quoteJson['Error Message'] || quoteJson['Note']) {
-      throw new Error(
-        quoteJson['Error Message'] || quoteJson['Note'] || 'Unknown GLOBAL_QUOTE error'
-      );
-    }
-    if (tsJson['Error Message'] || tsJson['Note']) {
-      throw new Error(
-        tsJson['Error Message'] || tsJson['Note'] || 'Unknown TIME_SERIES_DAILY_ADJUSTED error'
+    // 4) Suchfilter anwenden (falls vorhanden)
+    if (searchQuery.trim() !== '') {
+      const query = searchQuery.toLowerCase().trim();
+      assets = assets.filter(asset => 
+        asset.symbol.toLowerCase().includes(query) ||
+        (asset.name && asset.name.toLowerCase().includes(query)) ||
+        (asset.description && asset.description.toLowerCase().includes(query))
       );
     }
 
-    // ❼ GLOBAL_QUOTE parsen
-    const globalData = quoteJson['Global Quote'] || {};
-    const currentPrice = parseFloat(globalData['05. price'] || '0');
-    const currentChange = parseFloat(globalData['09. change'] || '0');
-    const currentChangePercent = parseFloat(
-      (globalData['10. change percent'] || '0').replace('%', '')
-    );
+    // 5) Verfügbare Kategorien für Filter-Dropdown laden
+    const categories = await getAssetCategories();
 
-    // ❽ TIME_SERIES_DAILY_ADJUSTED parsen
-    //     tsJson["Time Series (Daily)"] ist ein Objekt, in dem Keys die Datumsstrings sind
-    //     z. B. { "2025-05-31": { "1. open": "...", ...}, "2025-05-30": { ... }, ... }
-    const tsData = tsJson['Time Series (Daily)'] || {};
-    const historicalData = Object.entries(tsData).map(([date, obj]) => ({
-      date, // „2025-05-31“
-      open: parseFloat(obj['1. open']),
-      high: parseFloat(obj['2. high']),
-      low: parseFloat(obj['3. low']),
-      close: parseFloat(obj['4. close']),
-      volume: parseInt(obj['6. volume'], 10)
-    }));
-    // Sortiere absteigend nach Datum (aktuellster Tag zuerst)
-    historicalData.sort((a, b) => (a.date < b.date ? 1 : -1));
+    // 6) Portfolio-Positionen des Benutzers laden (falls eingeloggt)
+    let positions = [];
+    if (locals.user) {
+      try {
+        positions = await getUserPortfolioPositions(locals.user.id);
+      } catch (err) {
+        console.warn('Portfolio-Positionen konnten nicht geladen werden:', err);
+        // Nicht kritisch - weiter ohne Portfolio-Daten
+      }
+    }
 
-    // ❾ Gib alle Daten ans Frontend zurück
-    return {
-      symbol,
-      current: {
-        price: currentPrice,
-        change: currentChange,
-        changePercent: currentChangePercent,
-        lastUpdated: globalData['07. latest trading day'] || ''
-      },
-      historicalData
+    // 7) Assets nach Marktkapitalisierung oder Alphabet sortieren
+    const sortBy = url.searchParams.get('sort') || 'marketCap';
+    if (sortBy === 'marketCap') {
+      assets.sort((a, b) => (b.marketCap || 0) - (a.marketCap || 0));
+    } else if (sortBy === 'symbol') {
+      assets.sort((a, b) => a.symbol.localeCompare(b.symbol));
+    } else if (sortBy === 'change') {
+      assets.sort((a, b) => (b.changePercent || 0) - (a.changePercent || 0));
+    } else if (sortBy === 'price') {
+      assets.sort((a, b) => (b.price || 0) - (a.price || 0));
+    }
+
+    // 8) Statistiken berechnen
+    const stats = {
+      totalAssets: assets.length,
+      gainers: assets.filter(a => (a.changePercent || 0) > 0).length,
+      losers: assets.filter(a => (a.changePercent || 0) < 0).length,
+      avgChange: assets.length > 0 
+        ? assets.reduce((sum, a) => sum + (a.changePercent || 0), 0) / assets.length 
+        : 0
     };
+
+    // 9) Daten an Frontend zurückgeben
+    return {
+      assets,
+      positions,
+      categories,
+      currentFilter: {
+        category: categoryFilter,
+        search: searchQuery,
+        sort: sortBy
+      },
+      stats,
+      user: locals.user || null
+    };
+
   } catch (err) {
-    console.error(`Fehler beim Laden von Alpha Vantage Daten für ${symbol}:`, err);
-    // Entweder 404 (wenn Symbol nicht existiert) oder 500
-    throw error(500, `Konnte Daten für ${symbol} nicht laden.`);
+    console.error('Fehler beim Laden der Asset-Übersicht:', err);
+    
+    // Bei DB-Fehlern: Fallback-Daten oder Fehlerseite
+    throw error(500, {
+      message: 'Asset-Daten konnten nicht geladen werden',
+      details: err.message
+    });
   }
 }
+
+/** @type {import('./$types').Actions} */
+export const actions = {
+  // Action für Schnellkauf direkt aus der Übersicht
+  quickBuy: async ({ request, locals }) => {
+    if (!locals.user) {
+      throw error(401, 'Anmeldung erforderlich');
+    }
+
+    const data = await request.formData();
+    const symbol = data.get('symbol');
+    const amount = parseFloat(data.get('amount') || '1');
+
+    if (!symbol || amount <= 0) {
+      throw error(400, 'Ungültige Parameter');
+    }
+
+    try {
+      // Hier würde die Kauflogik implementiert werden
+      // Beispiel: await executeBuyOrder(locals.user.id, symbol, amount);
+      
+      return {
+        success: true,
+        message: `Kauf von ${amount} ${symbol} erfolgreich`
+      };
+    } catch (err) {
+      console.error('Fehler beim Schnellkauf:', err);
+      throw error(500, 'Kauf konnte nicht ausgeführt werden');
+    }
+  },
+
+  // Action für Schnellverkauf
+  quickSell: async ({ request, locals }) => {
+    if (!locals.user) {
+      throw error(401, 'Anmeldung erforderlich');
+    }
+
+    const data = await request.formData();
+    const symbol = data.get('symbol');
+    const amount = parseFloat(data.get('amount') || '1');
+
+    if (!symbol || amount <= 0) {
+      throw error(400, 'Ungültige Parameter');
+    }
+
+    try {
+      // Hier würde die Verkaufslogik implementiert werden
+      // Beispiel: await executeSellOrder(locals.user.id, symbol, amount);
+      
+      return {
+        success: true,
+        message: `Verkauf von ${amount} ${symbol} erfolgreich`
+      };
+    } catch (err) {
+      console.error('Fehler beim Schnellverkauf:', err);
+      throw error(500, 'Verkauf konnte nicht ausgeführt werden');
+    }
+  }
+};

@@ -1,208 +1,571 @@
-import { MongoClient, ObjectId } from 'mongodb'; // ObjectId Import hinzugefügt
+// src/lib/server/db.js
+import { MongoClient, ObjectId } from 'mongodb';
 import bcrypt from 'bcryptjs';
 import { DB_URI } from '$env/static/private';
 
 let client = null;
 let db = null;
 
+/** Verbindet einmalig mit MongoDB und speichert das DB‐Objekt */
 export async function connectToDatabase() {
-    if (!client) {
-        client = new MongoClient(DB_URI);
-        await client.connect();
-        db = client.db('investify');
-        console.log('Connected to MongoDB');
-    }
-    return db;
+  if (!client) {
+    client = new MongoClient(DB_URI);
+    await client.connect();
+    db = client.db('investify');
+    console.log('Connected to MongoDB');
+  }
+  return db;
 }
 
+/** Gibt das DB‐Objekt zurück (erst wenn connectToDatabase() gelaufen ist) */
 export async function getDb() {
-    if (!db) {
-        await connectToDatabase();
-    }
-    return db;
+  if (!db) {
+    await connectToDatabase();
+  }
+  return db;
 }
 
-// Customer functions
+//
+// ─── USER / CUSTOMER FUNKTIONEN ────────────────────────────────────────────────
+//
+
+/** Findet einen Kunden anhand seiner ObjectId */
 export async function getCustomerById(id) {
-    const db = await getDb();
-    const customers = db.collection('customers');
-    return await customers.findOne({ _id: new ObjectId(id) });
+  const database = await getDb();
+  return database
+    .collection('customers')
+    .findOne({ _id: new ObjectId(id) });
 }
 
+/** Findet einen User (customer) anhand der E-Mail (case-insensitive) */
 export async function getUserByEmail(email) {
-    const db = await getDb();
-    const customers = db.collection('customers');
-    return await customers.findOne({ email: email.toLowerCase() });
+  const database = await getDb();
+  return database
+    .collection('customers')
+    .findOne({ email: email.toLowerCase() });
 }
 
+/** Legt einen neuen User an, wirft Error, wenn Benutzer bereits existiert */
+export async function createUser(email, password, firstName, lastName) {
+  const database = await getDb();
+  const users = database.collection('customers');
+
+  const existingUser = await users.findOne({ email: email.toLowerCase() });
+  if (existingUser) {
+    throw new Error('User already exists');
+  }
+
+  const hashedPassword = await hashPassword(password);
+  const newUser = {
+    email: email.toLowerCase(),
+    password_hash: hashedPassword,
+    firstname: firstName,
+    lastname: lastName,
+    created_at: new Date(),
+    last_login: null
+  };
+
+  const result = await users.insertOne(newUser);
+  return {
+    id: result.insertedId.toString(),
+    email: newUser.email,
+    firstName,
+    lastName,
+    created_at: newUser.created_at
+  };
+}
+
+/** Prüft E-Mail und Passwort, gibt User‐Objekt (ohne Hash) zurück oder null */
+export async function authenticateUser(email, password) {
+  const database = await getDb();
+  const users = database.collection('customers');
+
+  const user = await users.findOne({ email: email.toLowerCase() });
+  if (!user) return null;
+
+  const isValid = await verifyPassword(password, user.password_hash);
+  if (!isValid) return null;
+
+  // Last login updaten
+  await users.updateOne(
+    { _id: user._id },
+    { $set: { last_login: new Date() } }
+  );
+
+  return {
+    id: user._id.toString(),
+    email: user.email,
+    firstName: user.firstname,
+    lastName: user.lastname,
+    last_login: new Date()
+  };
+}
+
+/** Hash für Passwort erzeugen */
+export async function hashPassword(password) {
+  return bcrypt.hash(password, 12);
+}
+
+/** Passwort mit Hash vergleichen */
+export async function verifyPassword(password, hashedPassword) {
+  return bcrypt.compare(password, hashedPassword);
+}
+
+//
+// ─── PORTFOLIO-FUNKTIONEN ──────────────────────────────────────────────────────
+//
+
+/** Liest alle Portfolios eines Nutzers (inkl. berechnetem Gesamtwert) */
 export async function getUserPortfolios(userId) {
   const database = await getDb();
   const portfoliosColl = database.collection('portfolios');
-  
-  // Suche alle Dokumente mit customer_id = ObjectId(userId)
-  const docs = await portfoliosColl.find({ customer_id: new ObjectId(userId) }).toArray();
-  
-  // Wandelt _id zu String um, und ggf. customer_id
-  return docs.map((doc) => ({
-    id: doc._id.toString(),
-    name: doc.name,
-    created_at: doc.created_at,
-    // Falls du später noch einen Wert-Feld hast, z.B. total_value, hier anfügen:
-    // value: doc.total_value
-  }));
+
+  const docs = await portfoliosColl
+    .find({ customer_id: new ObjectId(userId) })
+    .toArray();
+
+  const portfoliosWithValues = await Promise.all(
+    docs.map(async (doc) => {
+      const totalValue = await calculatePortfolioValue(doc._id);
+      return {
+        id: doc._id.toString(),
+        name: doc.name,
+        created_at: doc.created_at,
+        value: totalValue || 0
+      };
+    })
+  );
+
+  return portfoliosWithValues;
 }
 
-// 2. POST: Neues Portfolio erstellen
+/** Legt ein neues Portfolio für einen User an */
 export async function createPortfolio(userId, name) {
   const database = await getDb();
   const portfoliosColl = database.collection('portfolios');
 
   const newPortfolio = {
     customer_id: new ObjectId(userId),
-    name: name,
+    name,
     created_at: new Date()
   };
 
   const result = await portfoliosColl.insertOne(newPortfolio);
-
-  // Gib das neu erstellte Portfolio als Objekt zurück (inkl. id als String)
   return {
     id: result.insertedId.toString(),
     name: newPortfolio.name,
-    created_at: newPortfolio.created_at
+    created_at: newPortfolio.created_at,
+    value: 0
   };
 }
 
+/** Hilfsfunktion: Berechnet für ein Portfolio (ObjectId) den Gesamtwert aller Positionen */
+async function calculatePortfolioValue(portfolioObjectId) {
+  try {
+    const database = await getDb();
+    const transactionsColl = database.collection('transactions');
 
+    // Lade alle Transaktionen zu diesem Portfolio
+    const transactions = await transactionsColl
+      .find({ portfolio_id: new ObjectId(portfolioObjectId) })
+      .toArray();
 
+    // Gruppiere per Symbol: totalQuantity, totalCost
+    const positions = {};
+    for (const tx of transactions) {
+      const symbol = tx.symbol;
 
+      if (!positions[symbol]) {
+        positions[symbol] = { totalQuantity: 0, totalCost: 0 };
+      }
 
-// Portfolio functions
-export async function getPortfolioByCustomerId(customerId) {
-    const db = await getDb();
-    const portfolio = db.collection('portfolio');
-    return await portfolio.find({ customer_id: customerId }).toArray();
+      if (tx.type === 'buy' || tx.type === 'purchase') {
+        positions[symbol].totalQuantity += tx.quantity;
+        positions[symbol].totalCost += tx.quantity * tx.price;
+      } else if (tx.type === 'sell') {
+        positions[symbol].totalQuantity -= tx.quantity;
+        positions[symbol].totalCost -= tx.quantity * tx.price;
+      }
+    }
+
+    // Gesamtwert = sum(quantity * aktueller Preis)
+    let totalValue = 0;
+    for (const [symbol, position] of Object.entries(positions)) {
+      if (position.totalQuantity > 0) {
+        const asset = await getAssetBySymbol(symbol);
+        const currentPrice = asset ? asset.price : position.totalCost / position.totalQuantity;
+        totalValue += position.totalQuantity * currentPrice;
+      }
+    }
+
+    return totalValue;
+  } catch (error) {
+    console.error(`Fehler beim Berechnen des Portfolio-Werts:`, error);
+    return 0;
+  }
 }
 
-async function getUserPortfolio(userId) {
-    const holdings = await portfolio.find({ userId: new ObjectId(userId) }).toArray();
-    return holdings.map(h => ({
-        ...h,
-        _id: h._id.toString(),
-        userId: h.userId.toString()
-    }));
-}
+//
+// ─── TRANSAKTIONS-FUNKTIONEN ────────────────────────────────────────────────────
+//
 
-async function addToPortfolio(userId, purchase) {
-    const holding = {
-        userId: new ObjectId(userId),
-        assetSymbol: purchase.symbol,
-        assetName: purchase.name,
-        assetType: purchase.type, // 'stock', 'crypto', 'etf'
-        amount: purchase.amount,
-        purchasePrice: purchase.price,
-        purchaseDate: new Date(),
-        totalInvested: purchase.amount * purchase.price
+/** Fügt eine neue Transaktion (buy/sell) in ein Portfolio ein */
+export async function addTransaction(portfolioId, transactionData) {
+  try {
+    const database = await getDb();
+    const transactionsColl = database.collection('transactions');
+
+    const transaction = {
+      portfolio_id: new ObjectId(portfolioId),
+      symbol: transactionData.symbol,
+      type: transactionData.type, // 'buy' oder 'sell'
+      quantity: transactionData.quantity,
+      price: transactionData.price,
+      total_amount: transactionData.quantity * transactionData.price,
+      currency: transactionData.currency || 'USD',
+      transaction_date: transactionData.date || new Date(),
+      created_at: new Date()
     };
-    
-    const result = await portfolio.insertOne(holding);
-    return { ...holding, _id: result.insertedId.toString() };
-}
 
-async function removeFromPortfolio(holdingId) {
-    return await portfolio.deleteOne({ _id: new ObjectId(holdingId) });
-}
-
-// Price Cache Functions
-async function getCachedPrice(symbol) {
-    const cached = await priceCache.findOne({ symbol });
-    if (cached && (new Date() - cached.updatedAt) < 60000) { // 1 Minute Cache
-        return cached.data;
-    }
-    return null;
-}
-
-async function setCachedPrice(symbol, data) {
-    await priceCache.replaceOne(
-        { symbol },
-        { symbol, data, updatedAt: new Date() },
-        { upsert: true }
-    );
-}
-
-export async function createUser(email, password, firstName, lastName) {
-    const db = await getDb();
-    const users = db.collection('customers');
-    
-    // Check if user exists
-    const existingUser = await users.findOne({ email: email.toLowerCase() });
-    if (existingUser) {
-        throw new Error('User already exists');
-    }
-    
-    const hashedPassword = await hashPassword(password);
-    const user = {
-        email: email.toLowerCase(),
-        password_hash: hashedPassword,
-        firstname: firstName,
-        lastname: lastName,
-        created_at: new Date(),
-        last_login: null
-    };
-    
-    const result = await users.insertOne(user);
-    return { 
-        id: result.insertedId.toString(), 
-        email: user.email, 
-        firstName, 
-        lastName,
-        created_at: user.created_at
-    };
-}
-
-export async function authenticateUser(email, password) {
-    const db = await getDb();
-    const users = db.collection('customers');
-    
-    const user = await users.findOne({ email: email.toLowerCase() });
-    if (!user) {
-        return null; // User nicht gefunden - RETURN NULL statt Exception
-    }
-    
-    const isValid = await verifyPassword(password, user.password_hash);
-    if (!isValid) {
-        return null; // Falsches Passwort - RETURN NULL statt Exception
-    }
-    
-    // Update last login
-    await users.updateOne(
-        { _id: user._id },
-        { $set: { last_login: new Date() } }
-    );
-    
+    const result = await transactionsColl.insertOne(transaction);
     return {
-        id: user._id.toString(),
-        email: user.email,
-        firstName: user.firstname,
-        lastName: user.lastname,
-        last_login: new Date()
+      id: result.insertedId.toString(),
+      ...transaction,
+      portfolio_id: transaction.portfolio_id.toString()
     };
+  } catch (error) {
+    console.error('Fehler beim Hinzufügen der Transaktion:', error);
+    throw new Error('Transaktion konnte nicht hinzugefügt werden');
+  }
 }
 
-export async function hashPassword(password) {
-    return await bcrypt.hash(password, 12);
+/** Liefert alle Transaktionen eines Portfolios (absteigend nach Datum) */
+export async function getPortfolioTransactions(portfolioId) {
+  try {
+    const database = await getDb();
+    const transactionsColl = database.collection('transactions');
+
+    const transactions = await transactionsColl
+      .find({ portfolio_id: new ObjectId(portfolioId) })
+      .sort({ transaction_date: -1 })
+      .toArray();
+
+    return transactions.map((tx) => ({
+      id: tx._id.toString(),
+      portfolio_id: tx.portfolio_id.toString(),
+      symbol: tx.symbol,
+      type: tx.type,
+      quantity: tx.quantity,
+      price: tx.price,
+      total_amount: tx.total_amount,
+      currency: tx.currency,
+      transaction_date: tx.transaction_date,
+      created_at: tx.created_at
+    }));
+  } catch (error) {
+    console.error(`Fehler beim Laden der Transaktionen:`, error);
+    return [];
+  }
 }
 
-export async function verifyPassword(password, hashedPassword) {
-    return await bcrypt.compare(password, hashedPassword);
+/** Berechnet die aktiven Positionen in einem Portfolio (unrealized P&L) */
+export async function getPortfolioPositions(portfolioId) {
+  try {
+    const database = await getDb();
+    const transactionsColl = database.collection('transactions');
+
+    const transactions = await transactionsColl
+      .find({ portfolio_id: new ObjectId(portfolioId) })
+      .toArray();
+
+    const positions = {};
+    for (const tx of transactions) {
+      const symbol = tx.symbol;
+      if (!positions[symbol]) {
+        positions[symbol] = { totalQuantity: 0, totalCost: 0, transactions: [] };
+      }
+      positions[symbol].transactions.push(tx);
+      if (tx.type === 'buy' || tx.type === 'purchase') {
+        positions[symbol].totalQuantity += tx.quantity;
+        positions[symbol].totalCost += tx.quantity * tx.price;
+      } else if (tx.type === 'sell') {
+        positions[symbol].totalQuantity -= tx.quantity;
+        positions[symbol].totalCost -= tx.quantity * tx.price;
+      }
+    }
+
+    const activePositions = [];
+    for (const [symbol, pos] of Object.entries(positions)) {
+      if (pos.totalQuantity > 0) {
+        const asset = await getAssetBySymbol(symbol);
+        const currentPrice = asset ? asset.price : pos.totalCost / pos.totalQuantity;
+        const avgPrice = pos.totalCost / pos.totalQuantity;
+        activePositions.push({
+          symbol,
+          name: asset ? asset.name : symbol,
+          quantity: pos.totalQuantity,
+          avg_price: avgPrice,
+          current_price: currentPrice,
+          total_value: pos.totalQuantity * currentPrice,
+          unrealized_pnl: (currentPrice - avgPrice) * pos.totalQuantity,
+          unrealized_pnl_percent: ((currentPrice - avgPrice) / avgPrice) * 100
+        });
+      }
+    }
+
+    return activePositions;
+  } catch (error) {
+    console.error(`Fehler beim Berechnen der Positionen:`, error);
+    return [];
+  }
 }
 
-export default { 
-    getCustomerById, 
-    getPortfolioByCustomerId, 
-    getUserPortfolios,
-    connectToDatabase,
-    authenticateUser, 
-    createUser,
-    getUserByEmail  // Jetzt implementiert!
+//
+// ─── ASSET‐FUNKTIONEN ────────────────────────────────────────────────────────────
+//
+
+/** Holt alle Assets aus der Sammlung “assets” */
+export async function getAllAssets() {
+  try {
+    const database = await getDb();
+    const assets = await database.collection('assets').find({}).toArray();
+
+    return assets.map((asset) => ({
+      _id: asset._id.toString(),
+      symbol: asset.symbol,
+      name: asset.name || asset.symbol,
+      type: asset.type,
+      category: asset.category || asset.type,
+      price: asset.currentPrice || asset.price || 0,
+      change: asset.change || 0,
+      changePercent: asset.changePercent || 0,
+      currency: asset.currency || (asset.type === 'stock' ? 'CHF' : 'USD'),
+      marketCap: asset.marketCap || null,
+      volume: asset.volume || null,
+      lastUpdated: asset.lastUpdated || new Date(),
+      description: asset.description || '',
+      sector: asset.sector || null,
+      exchange: asset.exchange || null
+    }));
+  } catch (error) {
+    console.error('Fehler beim Laden der Assets:', error);
+    throw new Error('Assets konnten nicht geladen werden');
+  }
+}
+
+/** Holt ein einzelnes Asset nach Symbol (Großbuchstaben erwartet) */
+export async function getAssetBySymbol(symbol) {
+  try {
+    const database = await getDb();
+    const assetDoc = await database
+      .collection('assets')
+      .findOne({ symbol: symbol.toUpperCase() });
+
+    if (!assetDoc) return null;
+
+    return {
+      _id: assetDoc._id.toString(),
+      symbol: assetDoc.symbol,
+      name: assetDoc.name || assetDoc.symbol,
+      type: assetDoc.type,
+      category: assetDoc.category || assetDoc.type,
+      price: assetDoc.currentPrice || assetDoc.price || 0,
+      change: assetDoc.change || 0,
+      changePercent: assetDoc.changePercent || 0,
+      currency: assetDoc.currency || (assetDoc.type === 'stock' ? 'CHF' : 'USD'),
+      marketCap: assetDoc.marketCap || null,
+      volume: assetDoc.volume || null,
+      lastUpdated: assetDoc.lastUpdated || new Date(),
+      description: assetDoc.description || '',
+      sector: assetDoc.sector || null,
+      exchange: assetDoc.exchange || null
+    };
+  } catch (error) {
+    console.error(`Fehler beim Laden des Assets ${symbol}:`, error);
+    throw new Error(`Asset ${symbol} konnte nicht geladen werden`);
+  }
+}
+
+/** Holt alle Assets, die zu einer bestimmten Kategorie/Type gehören */
+export async function getAssetsByCategory(category) {
+  try {
+    const database = await getDb();
+    const filter =
+      category === 'all'
+        ? {}
+        : { $or: [{ type: category }, { category: category }] };
+
+    const assets = await database.collection('assets').find(filter).toArray();
+    return assets.map((asset) => ({
+      _id: asset._id.toString(),
+      symbol: asset.symbol,
+      name: asset.name || asset.symbol,
+      type: asset.type,
+      category: asset.category || asset.type,
+      price: asset.currentPrice || asset.price || 0,
+      change: asset.change || 0,
+      changePercent: asset.changePercent || 0,
+      currency: asset.currency || (asset.type === 'stock' ? 'CHF' : 'USD'),
+      marketCap: asset.marketCap || null,
+      volume: asset.volume || null,
+      lastUpdated: asset.lastUpdated || new Date(),
+      description: asset.description || '',
+      sector: asset.sector || null,
+      exchange: asset.exchange || null
+    }));
+  } catch (error) {
+    console.error(`Fehler beim Laden der Assets für Kategorie ${category}:`, error);
+    throw new Error(`Assets für Kategorie ${category} konnten nicht geladen werden`);
+  }
+}
+
+/** Liefert alle unterschiedlichen Asset‐Typen als Liste (z. B. ['stock','crypto','etf']) */
+export async function getAssetCategories() {
+  try {
+    const database = await getDb();
+    const types = await database.collection('assets').distinct('type');
+    const cats = await database.collection('assets').distinct('category');
+    const combined = [...new Set([...types, ...cats])];
+    return combined.filter((cat) => cat && cat.trim() !== '');
+  } catch (error) {
+    console.error('Fehler beim Laden der Asset-Kategorien:', error);
+    return ['stock', 'crypto', 'etf'];
+  }
+}
+
+/** Aktualisiert ein Asset (z. B. Preis, Change etc.), gibt true/false zurück */
+export async function updateAssetData(symbol, updateData) {
+  try {
+    const database = await getDb();
+    const result = await database.collection('assets').updateOne(
+      { symbol: symbol.toUpperCase() },
+      {
+        $set: {
+          ...updateData,
+          lastUpdated: new Date()
+        }
+      }
+    );
+    return result.modifiedCount > 0;
+  } catch (error) {
+    console.error(`Fehler beim Aktualisieren des Assets ${symbol}:`, error);
+    return false;
+  }
+}
+export async function getUserPortfolioPositions(userId) {
+  try {
+    const database = await getDb();
+    const portfoliosColl = database.collection('portfolios');
+    const transactionsColl = database.collection('transactions');
+
+    // 1) Alle Portfolios des Users abfragen
+    const userPortfolios = await portfoliosColl
+      .find({ customer_id: new ObjectId(userId) })
+      .toArray();
+
+    const positionsBySymbol = {};
+
+    // 2) Für jedes Portfolio alle Transaktionen holen und Positionen berechnen
+    for (const portfolio of userPortfolios) {
+      const txs = await transactionsColl
+        .find({ portfolio_id: new ObjectId(portfolio._id) })
+        .toArray();
+
+      for (const tx of txs) {
+        const sym = tx.symbol;
+        if (!positionsBySymbol[sym]) {
+          positionsBySymbol[sym] = { symbol: sym, totalQuantity: 0, totalCost: 0 };
+        }
+        if (tx.type === 'buy' || tx.type === 'purchase') {
+          positionsBySymbol[sym].totalQuantity += tx.quantity;
+          positionsBySymbol[sym].totalCost += tx.quantity * tx.price;
+        } else if (tx.type === 'sell') {
+          positionsBySymbol[sym].totalQuantity -= tx.quantity;
+          positionsBySymbol[sym].totalCost -= tx.quantity * tx.price;
+        }
+      }
+    }
+
+    // 3) Aus „positionsBySymbol“ ein Array fertiger Positionen bauen
+    const result = [];
+    for (const [sym, pos] of Object.entries(positionsBySymbol)) {
+      if (pos.totalQuantity > 0) {
+        // Optional: Aktuellen Preis aus der assets‐Sammlung holen
+        const assetDoc = await database
+          .collection('assets')
+          .findOne({ symbol: sym.toUpperCase() });
+        const currentPrice = assetDoc ? assetDoc.currentPrice || assetDoc.price : (pos.totalCost / pos.totalQuantity);
+        const avgPrice = pos.totalCost / pos.totalQuantity;
+
+        result.push({
+          symbol: sym,
+          amount: pos.totalQuantity,
+          avg_price: avgPrice,
+          total_value: pos.totalQuantity * currentPrice,
+          currency: assetDoc ? assetDoc.currency : 'USD'
+        });
+      }
+    }    return result;
+  } catch (err) {
+    console.error(`Fehler in getUserPortfolioPositions(${userId}):`, err);
+    return [];
+  }
+}
+//
+// ─── PRICE‐CACHE - FUNKTIONEN ────────────────────────────────────────────────────
+//
+
+/** Holt einen zwischengespeicherten Preis (falls < 1 Minute alt) */
+export async function getCachedPrice(symbol) {
+  const database = await getDb();
+  const priceCache = database.collection('priceCache');
+  const cached = await priceCache.findOne({ symbol });
+
+  if (cached && new Date() - cached.updatedAt < 60_000) {
+    return cached.data;
+  }
+  return null;
+}
+
+/** Speichert/Update den Preis in der Collection „priceCache“ */
+export async function setCachedPrice(symbol, data) {
+  const database = await getDb();
+  const priceCache = database.collection('priceCache');
+
+  await priceCache.replaceOne(
+    { symbol },
+    { symbol, data, updatedAt: new Date() },
+    { upsert: true }
+  );
+}
+
+//
+// ─── EXPORTIERTE FUNKTIONEN IN EINEM OBJECT ────────────────────────────────────
+//
+export default {
+  connectToDatabase,
+  getDb,
+
+  getCustomerById,
+  getUserByEmail,
+  createUser,
+  authenticateUser,
+
+  getUserPortfolios,
+  createPortfolio,
+
+  addTransaction,
+  getPortfolioTransactions,
+  getUserPortfolioPositions,
+  getPortfolioPositions,
+  calculatePortfolioValue,
+
+  getAllAssets,
+  getAssetBySymbol,
+  getAssetsByCategory,
+  getAssetCategories,
+  updateAssetData,
+
+  getCachedPrice,
+  setCachedPrice
 };
