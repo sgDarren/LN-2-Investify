@@ -3,29 +3,38 @@
   import { portfolioStore } from "$lib/stores/portfolio.svelte.js";
   import { authClient } from "$lib/auth-client";
   import { goto } from "$app/navigation";
+
   // Better Auth – Session‐Store
   const session = authClient.useSession();
 
   // Ableitung, ob der Nutzer eingeloggt ist
-  const isAuthenticated = $derived(() => !!$session?.data);
+  const isAuthenticated = $derived(
+    () => !!$session.data
+  );
 
   // Eingeloggte Nutzer‐Daten
-  let user = $derived(() => $session.data?.user);
+  const user = $derived(
+    () => $session.data?.user
+  );
 
   // Aktueller Pfad (z.B. "/dashboard")
-  let currentPath = $derived(() => $page.url.pathname);
+  const currentPath = $derived(
+    () => $page.url.pathname
+  );
 
   // Gesamtwert aus dem Portfolio‐Store
-  let totalValue = $derived(() => $portfolioStore.totalValue);
+  const totalValue = $derived(
+    () => $portfolioStore.totalValue
+  );
 
-  // Portfolio laden, sobald Session‐Daten da sind
+  // Portfolio laden, sobald Session‐Daten existieren
   $effect(() => {
-    if (session.data) {
+    if ($session.data) {
       portfolioStore.loadPortfolio();
     }
   });
 
-  // Helper‐Funktion: Ist dieser Pfad aktiv?
+  // Helper: Ist dieser Pfad aktiv?
   function isActive(path) {
     return $currentPath === path || $currentPath.startsWith(path + "/");
   }
@@ -95,6 +104,16 @@
               <span>Assets</span>
             </a>
           </li>
+          <li class="nav-item">
+            <a
+              class="nav-link"
+              class:active={isActive("/transactions")}
+              href="/transactions"
+            >
+              <i class="bi bi-arrow-left-right nav-icon"></i>
+              <span>Transaktionen</span>
+            </a>
+          </li>
         </ul>
 
         <!-- User Menu -->
@@ -111,14 +130,13 @@
               </div>
               <div class="user-info">
                 <div class="user-name">
-                  {$user?.firstName}
-                  {$user?.lastName}
+                  {$user?.firstName} {$user?.lastName}
                 </div>
                 <div class="user-portfolio">
                   {new Intl.NumberFormat("de-CH", {
                     style: "currency",
                     currency: "CHF",
-                    notation: "compact",
+                    notation: "compact"
                   }).format($totalValue)}
                 </div>
               </div>
@@ -438,7 +456,7 @@
     border-color: rgba(0, 0, 0, 0.1);
   }
 
-  /* Auth Links (für nicht angemeldete Benutzer) */
+  /* Auth Links (für nicht eingeloggte Benutzer) */
   .auth-links {
     display: flex;
     align-items: center;
