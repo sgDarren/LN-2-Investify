@@ -11,7 +11,6 @@ import {
 /** @type {import('./$types').PageServerLoad} */
 export async function load({ url, locals }) {
   try {
-    // 1) Authentifizierung prüfen (optional)
     if (!locals.user) {
       throw redirect(302, '/auth/login');
     }

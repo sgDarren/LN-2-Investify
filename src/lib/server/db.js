@@ -240,28 +240,48 @@ export async function addTransaction(portfolioId, transactionData) {
 }
 
 /** Liefert alle Transaktionen eines Portfolios (absteigend nach Datum) */
+/** Liefert alle Transaktionen eines Portfolios (absteigend nach Datum) */
 export async function getPortfolioTransactions(portfolioId) {
   try {
     const database = await getDb();
     const transactionsColl = database.collection('transactions');
+    const assetsColl = database.collection('assets');
 
     const transactions = await transactionsColl
-      .find({ portfolio_id: new ObjectId(portfolioId) })
+      .find({ portfolio_id: portfolioId })  // Kein ObjectId wenn bereits String
       .sort({ transaction_date: -1 })
       .toArray();
 
-    return transactions.map((tx) => ({
-      id: tx._id.toString(),
-      portfolio_id: tx.portfolio_id.toString(),
-      symbol: tx.symbol,
-      type: tx.type,
-      quantity: tx.quantity,
-      price: tx.price,
-      total_amount: tx.total_amount,
-      currency: tx.currency,
-      transaction_date: tx.transaction_date,
-      created_at: tx.created_at
-    }));
+    // Asset-Daten für Symbol und Currency laden
+    const enrichedTransactions = await Promise.all(
+      transactions.map(async (tx) => {
+
+        if (tx.asset_id) {
+          const asset = await assetsColl.findOne({ 
+            _id: new ObjectId(tx.asset_id) 
+          });
+          if (asset) {
+            symbol = asset.symbol;
+            currency = asset.currency;
+          }
+        }
+
+        return {
+          id: tx._id.toString(),
+          portfolio_id: tx.portfolio_id,
+          symbol: symbol,                    // Aus Asset laden
+          type: tx.type,
+          quantity: tx.amount,               // amount bleibt amount -> quantity
+          price: tx.price_per_unit,          // price_per_unit -> price
+          total_amount: tx.total_value,      // total_value -> total_amount
+          currency: currency,                // Aus Asset laden
+          transaction_date: tx.transaction_date,
+          created_at: tx.transaction_date   // Fallback auf transaction_date
+        };
+      })
+    );
+
+    return enrichedTransactions;
   } catch (error) {
     console.error(`Fehler beim Laden der Transaktionen:`, error);
     return [];
